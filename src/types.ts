@@ -32,6 +32,8 @@ export interface SpikeRow {
 
 export interface Pattern {
   name: string;
+  /** 0 easy, 1 medium, 2 hard. Drives the difficulty ramp in `World`. */
+  tier: number;
   height: number;
   magnets: Magnet[];
   spikes: SpikeRow[];
@@ -39,6 +41,7 @@ export interface Pattern {
 
 export interface PlacedPattern {
   index: number;
+  tier: number;
   top: number;
   height: number;
   magnets: Magnet[];

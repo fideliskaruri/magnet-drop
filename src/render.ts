@@ -1,4 +1,4 @@
-import { COLORS, ORB_RADIUS, RAIL_FIELD, VIEW_H, VIEW_W } from './config.ts';
+import { CAMERA_ANCHOR, COLORS, ORB_RADIUS, RAIL_FIELD, STALL_WARN, VIEW_H, VIEW_W } from './config.ts';
 import type { Game } from './game.ts';
 import { attracts, closestPoint, fieldU, spikeTriangles } from './physics.ts';
 import type { Magnet, Polarity, SpikeRow } from './types.ts';
@@ -65,12 +65,15 @@ export class Renderer {
       for (const m of g.world.magnets) if (magnetVisible(m, top, bottom)) this.magnet(m, time);
       if (playing) this.fieldHints(g, ox, oy, time);
       this.trail(g);
-      if (!(g.state === 'dying' && g.exploded)) this.orb(ox, oy, g.orb.polarity, g.orb.stuck !== null, time);
+      const blink = g.grace > 0 && Math.floor(time * 16) % 2 === 0;
+      if (!(g.state === 'dying' && g.exploded) && !blink) this.orb(ox, oy, g.orb.polarity, g.orb.stuck !== null, time);
+      if (playing && g.shield) this.shieldRing(ox, oy, time);
       this.effects(g);
       ctx.restore();
     }
 
     this.walls();
+    if (playing) this.stallWarning(oy - camY);
 
     if (g.fx.flash > 0) {
       ctx.fillStyle = `rgba(255,255,255,${(g.fx.flash / 0.18) * 0.12})`;
@@ -285,6 +288,33 @@ export class Renderer {
     ctx.restore();
   }
 
+  private shieldRing(x: number, y: number, time: number): void {
+    const { ctx } = this;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(232,238,252,0.7)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 4]);
+    ctx.lineDashOffset = -time * 20;
+    ctx.beginPath();
+    ctx.arc(x, y, ORB_RADIUS + 5, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /** Red glow along the top edge as the camera closes in on a stalled orb. */
+  private stallWarning(screenY: number): void {
+    const near = VIEW_H * STALL_WARN;
+    if (screenY >= near) return;
+    const k = Math.min(1, (near - screenY) / (near + ORB_RADIUS));
+    const { ctx } = this;
+    const h = VIEW_H * CAMERA_ANCHOR * 0.6;
+    const grad = ctx.createLinearGradient(0, 0, 0, h);
+    grad.addColorStop(0, hexA(COLORS.red, 0.45 * k));
+    grad.addColorStop(1, hexA(COLORS.red, 0));
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, VIEW_W, h);
+  }
+
   private effects(g: Game): void {
     const { ctx } = this;
     ctx.save();
@@ -316,11 +346,39 @@ export class Renderer {
     ctx.shadowBlur = 6;
     ctx.font = '800 30px system-ui, sans-serif';
     ctx.fillText(g.score.toLocaleString('en-US'), VIEW_W / 2, 22);
+    if (g.state === 'playing') {
+      this.shieldIcon(22, 30, g.shield);
+      if (g.messageTime > 0) {
+        ctx.globalAlpha = Math.min(1, g.messageTime / 0.3);
+        ctx.font = '800 14px system-ui, sans-serif';
+        ctx.fillStyle = COLORS.text;
+        ctx.fillText(g.message, VIEW_W / 2, 62);
+        ctx.globalAlpha = 1;
+      }
+    }
     if (g.state === 'dying' && g.stateTime > 0.6) {
       ctx.font = '700 14px system-ui, sans-serif';
       ctx.fillStyle = COLORS.dim;
       ctx.fillText(g.score >= g.best && g.score > 0 ? 'NEW BEST · TAP TO RETRY' : 'TAP TO RETRY', VIEW_W / 2, VIEW_H * 0.55);
     }
+    ctx.restore();
+  }
+
+  private shieldIcon(x: number, y: number, ready: boolean): void {
+    const { ctx } = this;
+    ctx.save();
+    ctx.shadowBlur = 0;
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = ready ? COLORS.text : COLORS.chrome;
+    ctx.fillStyle = ready ? 'rgba(232,238,252,0.18)' : 'rgba(0,0,0,0)';
+    ctx.beginPath();
+    ctx.moveTo(x, y - 10);
+    ctx.lineTo(x + 9, y - 6);
+    ctx.quadraticCurveTo(x + 8, y + 6, x, y + 11);
+    ctx.quadraticCurveTo(x - 8, y + 6, x - 9, y - 6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -338,6 +396,10 @@ export class Renderer {
     ctx.fillText('DROP', VIEW_W / 2, 194);
     ctx.shadowBlur = 0;
     ctx.fillStyle = COLORS.dim;
+    ctx.font = '800 12px system-ui, sans-serif';
+    ctx.fillText('EASY', VIEW_W / 2, 226);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = COLORS.dim;
     ctx.font = '700 13px system-ui, sans-serif';
     ctx.fillText('BEST', VIEW_W / 2, 262);
     ctx.fillStyle = COLORS.text;
@@ -353,6 +415,7 @@ export class Renderer {
     ctx.fillStyle = COLORS.dim;
     ctx.font = '600 12px system-ui, sans-serif';
     ctx.fillText('Tap to flip polarity. Opposites attract.', VIEW_W / 2, 560);
+    ctx.fillText('Your shield blocks one spike hit and comes back.', VIEW_W / 2, 580);
     ctx.restore();
   }
 }

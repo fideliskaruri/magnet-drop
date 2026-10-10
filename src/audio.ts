@@ -64,6 +64,13 @@ export const sfx = {
     noise(0.45, 0.3, 4000);
     tone('triangle', 300, 40, 0.4, 0.12);
   },
+  shieldBreak(): void {
+    tone('triangle', 900, 300, 0.25, 0.12);
+    noise(0.2, 0.15, 6000);
+  },
+  shieldReady(): void {
+    tone('sine', 520, 1040, 0.18, 0.08);
+  },
 };
 
 export function haptic(pattern: number | number[]): void {

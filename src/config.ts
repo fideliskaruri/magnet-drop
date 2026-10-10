@@ -20,7 +20,22 @@ export const RAIL_STRENGTH = 2600;
 export const RAIL_FIELD = 110;
 export const LAUNCH_SPEED = 620;
 
-export const SPIKE_FORGIVENESS = 2;
+// Spikes only count once they are this far inside the orb's drawn edge.
+export const SPIKE_FORGIVENESS = 4;
+
+// Shield: absorbs one spike hit. Every run starts with one and it comes back after clearing a few patterns.
+export const SHIELD_RECHARGE_PATTERNS = 5;
+export const SHIELD_HOP = 220;
+export const SHIELD_GRACE = 1;
+export const SHIELD_HITSTOP = 0.12;
+
+// Difficulty ramp: patterns of tier t only appear once this many patterns have spawned.
+export const TIER_UNLOCK = [0, 8, 14];
+// After a tier 2 pattern, the next one is always a breather from tier 0.
+export const BREATHER_AFTER_TIER = 2;
+
+// The top edge glows red once the orb is this close to being caught by the camera.
+export const STALL_WARN = 0.16;
 
 export const CAMERA_ANCHOR = 0.35;
 export const CAMERA_MIN_SPEED = 60;
@@ -34,7 +49,7 @@ export const AUTO_READY = 1.5;
 
 export const TRAIL_LENGTH = 20;
 export const SCORE_DIVISOR = 10;
-export const BEST_KEY = 'magnetdrop.best';
+export const BEST_KEY = 'magnetdrop.easy.best';
 
 export const COLORS = {
   bg: '#070b18',

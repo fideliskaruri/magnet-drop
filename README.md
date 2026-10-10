@@ -9,6 +9,18 @@ A one-tap vertical arcade prototype. Your orb falls through a field of magnets a
 
 Play it here: https://fideliskaruri.github.io/magnet-drop/
 
+### This branch: `easy`
+
+Live at https://fideliskaruri.github.io/magnet-drop/easy/. Same game, less frustrating:
+
+- **Shield.** Every run starts with one. It blocks one spike hit: the orb hops and passes through spikes for a moment. It comes back after you clear 5 more patterns. The icon in the top left shows whether it's ready.
+- **Difficulty ramp.** Patterns have a tier (easy, medium, hard). The first 8 patterns are all easy, medium ones join from the 9th and hard ones from the 15th. A hard pattern is always followed by an easy one.
+- **Wider exits.** The gaps in Ping-pong, Rail slide and Corridor are wider, and the Corridor rails are shorter.
+- **Kinder spikes.** Spikes have to reach 4 px inside the orb's edge to count (was 2).
+- **Stall warning.** The top edge glows red when the camera is about to catch you.
+
+The best score is stored under its own key (`magnetdrop.easy.best`).
+
 ### Variants
 
 Each experiment lives on its own branch and deploys to its own URL. Every push to any of these branches rebuilds the whole site.
@@ -34,7 +46,7 @@ pnpm dev          # http://localhost:5180 (also reachable from your phone on the
 pnpm typecheck
 pnpm build
 pnpm sim [n]      # proves every pattern (or only pattern n) can be cleared from every entry point
-pnpm verify [url] # headless Edge end-to-end checks against a running dev server; screenshots go to %TEMP%\agent-scratch\magnet-drop
+pnpm verify [url] # headless Edge end-to-end checks against a running dev server (default http://localhost:5192/); screenshots go to %TEMP%\agent-scratch\magnet-drop-easy
 ```
 
 All feel and tuning numbers are in `src/config.ts`. The patterns are in `src/patterns.ts`.

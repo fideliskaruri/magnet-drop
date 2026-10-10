@@ -10,15 +10,21 @@ import {
   ORB_RADIUS,
   RESTART_LOCK,
   SCORE_DIVISOR,
+  SHIELD_GRACE,
+  SHIELD_HITSTOP,
+  SHIELD_HOP,
+  SHIELD_RECHARGE_PATTERNS,
   VIEW_H,
   VIEW_W,
 } from './config.ts';
 import { Fx } from './fx.ts';
-import { flip, step } from './physics.ts';
-import type { GameStateName, Orb } from './types.ts';
+import { flip, step, touchingSpikes } from './physics.ts';
+import type { GameStateName, Orb, SpikeRow } from './types.ts';
 import { World } from './world.ts';
 
 const LAUNCH_HITSTOP = 0.035;
+const NO_SPIKES: readonly SpikeRow[] = [];
+const MESSAGE_TIME = 1.4;
 
 function loadBest(): number {
   try {
@@ -42,9 +48,18 @@ export class Game {
   hitstop = 0;
   exploded = false;
   launches = 0;
+  shield = true;
+  /** Seconds left of passing harmlessly through spikes after the shield breaks. */
+  grace = 0;
+  shieldsUsed = 0;
+  patternsPassed = 0;
+  private sinceShield = 0;
+  message = '';
+  messageTime = 0;
   /** Set by the dev hook to make runs reproducible. */
   seedOverride: number | null = null;
   forcedPatterns: number[] = [];
+  startShield = true;
   private taps = 0;
   private trailTick = 0;
 
@@ -69,6 +84,13 @@ export class Game {
     this.runTime = 0;
     this.hitstop = 0;
     this.launches = 0;
+    this.shield = this.startShield;
+    this.grace = 0;
+    this.shieldsUsed = 0;
+    this.patternsPassed = 0;
+    this.sinceShield = 0;
+    this.message = '';
+    this.messageTime = 0;
     this.exploded = false;
     this.setState('playing');
   }
@@ -124,6 +146,7 @@ export class Game {
     // playing
     for (let i = 0; i < taps; i++) this.doFlip();
     this.fx.update(dt);
+    this.messageTime = Math.max(0, this.messageTime - dt);
     if (this.hitstop > 0) {
       this.hitstop -= dt;
       this.orb.prevX = this.orb.x;
@@ -132,10 +155,18 @@ export class Game {
     }
     this.runTime += dt;
 
-    const ev = step(this.orb, this.world.magnets, this.world.spikes, dt);
+    if (this.grace > 0) {
+      this.grace -= dt;
+      // Never let the grace run out while the orb is still inside a spike row.
+      if (this.grace <= 0 && touchingSpikes(this.orb, this.world.spikes)) this.grace = dt;
+    }
+    const ev = step(this.orb, this.world.magnets, this.grace > 0 ? NO_SPIKES : this.world.spikes, dt);
     if (ev === 'dead') {
-      this.die();
-      return;
+      if (!this.shield) {
+        this.die();
+        return;
+      }
+      this.breakShield();
     }
     if (ev === 'stick') {
       sfx.stick();
@@ -153,7 +184,44 @@ export class Game {
       return;
     }
     this.world.update(this.camY);
+    const passed = this.world.passed(this.orb.y);
+    this.patternsPassed += passed;
+    if (!this.shield && passed > 0) {
+      this.sinceShield += passed;
+      if (this.sinceShield >= SHIELD_RECHARGE_PATTERNS) {
+        this.shield = true;
+        this.say('SHIELD READY');
+        this.fx.pulse(this.orb.x, this.orb.y, COLORS.text, 40, 0.3, 3);
+        sfx.shieldReady();
+      }
+    }
     this.score = Math.max(this.score, Math.floor(this.orb.y / SCORE_DIVISOR));
+  }
+
+  /** A spike hit with the shield up: pop it, hop the orb and let it pass through spikes for a moment. */
+  private breakShield(): void {
+    const o = this.orb;
+    o.stuck = null;
+    o.x = o.prevX;
+    o.y = o.prevY;
+    o.vx *= 0.5;
+    o.vy = -SHIELD_HOP;
+    this.shield = false;
+    this.sinceShield = 0;
+    this.shieldsUsed++;
+    this.grace = SHIELD_GRACE;
+    this.hitstop = SHIELD_HITSTOP;
+    this.say('SHIELD SAVED YOU');
+    this.fx.pulse(o.x, o.y, COLORS.text, 70, 0.4, 5);
+    this.fx.shake(7, 0.18);
+    this.fx.flash = 0.12;
+    sfx.shieldBreak();
+    haptic([15, 30, 15]);
+  }
+
+  private say(text: string): void {
+    this.message = text;
+    this.messageTime = MESSAGE_TIME;
   }
 
   private doFlip(): void {
