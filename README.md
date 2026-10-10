@@ -9,6 +9,18 @@ A one-tap vertical arcade prototype. Your orb falls through a field of magnets a
 
 Play it here: https://fideliskaruri.github.io/magnet-drop/
 
+### Variants
+
+Each experiment lives on its own branch and deploys to its own URL. Every push to any of these branches rebuilds the whole site.
+
+| Branch | Idea | URL |
+|---|---|---|
+| `rise` | The orb floats up instead of falling | https://fideliskaruri.github.io/magnet-drop/rise/ |
+| `easy` | Same game, more forgiving | https://fideliskaruri.github.io/magnet-drop/easy/ |
+| `endless` | Procedural, Flappy-style: score from obstacles passed | https://fideliskaruri.github.io/magnet-drop/endless/ |
+| `powerups` | Boosters, shields and phasers in the arena | https://fideliskaruri.github.io/magnet-drop/powerups/ |
+| `sound` | Reworked sound design | https://fideliskaruri.github.io/magnet-drop/sound/ |
+
 ## Run locally
 
 ```sh

@@ -1,8 +1,9 @@
 name: Deploy to GitHub Pages
 
+# main is served at /magnet-drop/ and every variant branch at /magnet-drop/<branch>/.
 on:
   push:
-    branches: [main]
+    branches: [main, rise, easy, endless, powerups, sound]
   workflow_dispatch:
 
 permissions:
@@ -14,21 +15,42 @@ concurrency:
   group: pages
   cancel-in-progress: true
 
+env:
+  VARIANTS: rise easy endless powerups sound
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
+      - name: Build main
+        run: |
+          pnpm install --frozen-lockfile
+          BASE_PATH=/magnet-drop/ pnpm build
+          mkdir -p site && cp -r dist/. site/
+      - name: Build variant branches
+        run: |
+          for b in $VARIANTS; do
+            if git ls-remote --exit-code --heads origin "$b" > /dev/null; then
+              echo "::group::$b"
+              git worktree add "wt-$b" "origin/$b"
+              (cd "wt-$b" && pnpm install --frozen-lockfile && BASE_PATH="/magnet-drop/$b/" pnpm build)
+              mkdir -p "site/$b" && cp -r "wt-$b/dist/." "site/$b/"
+              echo "::endgroup::"
+            else
+              echo "branch $b not pushed yet, skipping"
+            fi
+          done
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
+          path: site
 
   deploy:
     needs: build
