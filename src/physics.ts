@@ -1,6 +1,6 @@
 import {
   AIR_DAMPING_X,
-  GRAVITY,
+  BUOYANCY,
   LAUNCH_SPEED,
   MAX_SPEED,
   ORB_RADIUS,
@@ -9,7 +9,7 @@ import {
   RAIL_STRENGTH,
   REPEL_BOUNCE,
   SPIKE_FORGIVENESS,
-  TERMINAL_FALL,
+  TERMINAL_RISE,
   VIEW_W,
   WALL_RESTITUTION,
 } from './config.ts';
@@ -58,7 +58,7 @@ export function step(orb: Orb, magnets: readonly Magnet[], spikes: readonly Spik
     stepStuck(orb, dt);
   } else {
     let ax = 0;
-    let ay = GRAVITY;
+    let ay = -BUOYANCY;
     for (const m of magnets) {
       const { cx, cy } = closestPoint(m, orb.x, orb.y);
       const dx = cx - orb.x;
@@ -75,7 +75,7 @@ export function step(orb: Orb, magnets: readonly Magnet[], spikes: readonly Spik
     orb.vx += ax * dt;
     orb.vy += ay * dt;
     orb.vx *= Math.exp(-AIR_DAMPING_X * dt);
-    if (orb.vy > TERMINAL_FALL) orb.vy -= (orb.vy - TERMINAL_FALL) * Math.min(1, 3 * dt);
+    if (orb.vy < -TERMINAL_RISE) orb.vy += (-TERMINAL_RISE - orb.vy) * Math.min(1, 3 * dt);
     const sp = Math.hypot(orb.vx, orb.vy);
     if (sp > MAX_SPEED) {
       orb.vx *= MAX_SPEED / sp;
@@ -93,7 +93,7 @@ export function step(orb: Orb, magnets: readonly Magnet[], spikes: readonly Spik
       if (d >= minD) continue;
       if (d < 1e-6) {
         nx = 0;
-        ny = -1;
+        ny = 1;
       } else {
         nx /= d;
         ny /= d;
@@ -136,13 +136,13 @@ export function step(orb: Orb, magnets: readonly Magnet[], spikes: readonly Spik
   return event;
 }
 
-/** Held against an attracting magnet: slide along its surface under gravity. */
+/** Held against an attracting magnet: slide along its surface under buoyancy. */
 function stepStuck(orb: Orb, dt: number): void {
   const s = orb.stuck!;
   const m = s.magnet;
-  // Perched exactly on top is a perfect balance that never resolves; tip it over.
-  if (s.ny < -0.999) orb.vx += (orb.x >= closestPoint(m, orb.x, orb.y).cx ? 30 : -30) * dt;
-  orb.vy += GRAVITY * dt;
+  // Hanging exactly underneath is a perfect balance that never resolves; tip it over.
+  if (s.ny > 0.999) orb.vx += (orb.x >= closestPoint(m, orb.x, orb.y).cx ? 30 : -30) * dt;
+  orb.vy -= BUOYANCY * dt;
   let vn = orb.vx * s.nx + orb.vy * s.ny;
   if (vn < 0) vn = 0;
   orb.vx -= vn * s.nx;

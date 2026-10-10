@@ -14,7 +14,8 @@ export interface DebugHook {
     camY: number;
     launches: number;
     pattern: number | null;
-    patternTop: number | null;
+    /** World y of the current pattern's bottom edge, where the rising orb enters it. */
+    patternBottom: number | null;
     magnets: number;
     spikes: number;
   };
@@ -55,7 +56,7 @@ export function installDebugHook(game: Game): void {
         camY: game.camY,
         launches: game.launches,
         pattern: p ? p.index : null,
-        patternTop: p ? p.top : null,
+        patternBottom: p ? p.top + p.height : null,
         magnets: game.world.magnets.length,
         spikes: game.world.spikes.length,
       };

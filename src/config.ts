@@ -7,8 +7,9 @@ export const DT = 1 / PHYSICS_HZ;
 export const MAX_FRAME_DT = 0.1;
 
 export const ORB_RADIUS = 11;
-export const GRAVITY = 700;
-export const TERMINAL_FALL = 380;
+// The orb is buoyant: it accelerates upward (toward -y) up to a terminal rise speed.
+export const BUOYANCY = 600;
+export const TERMINAL_RISE = 340;
 export const MAX_SPEED = 900;
 export const AIR_DAMPING_X = 0.6;
 
@@ -22,9 +23,12 @@ export const LAUNCH_SPEED = 620;
 
 export const SPIKE_FORGIVENESS = 2;
 
-export const CAMERA_ANCHOR = 0.35;
+// Orb sits low on screen so you see what is coming from above.
+export const CAMERA_ANCHOR = 0.65;
 export const CAMERA_MIN_SPEED = 60;
 export const CAMERA_MIN_SPEED_DELAY = 2;
+// Fraction down the view where the bottom edge starts glowing to warn you that you are sinking.
+export const SINK_WARN = 0.73;
 
 export const PATTERN_GAP = 120;
 
@@ -34,7 +38,7 @@ export const AUTO_READY = 1.5;
 
 export const TRAIL_LENGTH = 20;
 export const SCORE_DIVISOR = 10;
-export const BEST_KEY = 'magnetdrop.best';
+export const BEST_KEY = 'magnetdrop.rise.best';
 
 export const COLORS = {
   bg: '#070b18',

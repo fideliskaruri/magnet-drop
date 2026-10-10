@@ -2,7 +2,7 @@
 // For each pattern and entry point: does doing nothing fail, and can a beam search over
 // flip decisions (one choice every DECISION seconds) clear it?
 // Usage: node --experimental-strip-types scripts/sim.ts [patternNumber]
-import { DT, TERMINAL_FALL } from '../src/config.ts';
+import { DT, TERMINAL_RISE } from '../src/config.ts';
 import { PATTERNS } from '../src/patterns.ts';
 import { flip, step } from '../src/physics.ts';
 import type { Orb, Polarity } from '../src/types.ts';
@@ -14,26 +14,28 @@ const MAX_T = 8;
 
 const clone = (o: Orb): Orb => ({ ...o, stuck: o.stuck ? { ...o.stuck } : null });
 
-function start(x0: number, pol: Polarity): Orb {
-  return { x: x0, y: -120, vx: 0, vy: TERMINAL_FALL * 0.8, prevX: x0, prevY: -120, polarity: pol, stuck: null };
+/** Enter 120 px below the pattern bottom, already rising. */
+function start(pi: number, x0: number, pol: Polarity): Orb {
+  const y = PATTERNS[pi]!.height + 120;
+  return { x: x0, y, vx: 0, vy: -TERMINAL_RISE * 0.8, prevX: x0, prevY: y, polarity: pol, stuck: null };
 }
 
 function advance(pi: number, orb: Orb, steps: number): 'dead' | 'clear' | 'ok' {
   const p = PATTERNS[pi]!;
   for (let i = 0; i < steps; i++) {
     if (step(orb, p.magnets, p.spikes, DT) === 'dead') return 'dead';
-    if (orb.y > p.height + 20) return 'clear';
+    if (orb.y < -20) return 'clear';
   }
   return 'ok';
 }
 
 function noFlip(pi: number, x0: number, pol: Polarity): boolean {
-  return advance(pi, start(x0, pol), Math.round(MAX_T / DT)) === 'clear';
+  return advance(pi, start(pi, x0, pol), Math.round(MAX_T / DT)) === 'clear';
 }
 
 /** Minimum flips needed to clear, or -1 if no flip sequence works. */
 function solve(pi: number, x0: number, pol: Polarity): number {
-  let beam: { orb: Orb; flips: number }[] = [{ orb: start(x0, pol), flips: 0 }];
+  let beam: { orb: Orb; flips: number }[] = [{ orb: start(pi, x0, pol), flips: 0 }];
   let best = -1;
   for (let t = 0; t < MAX_T && beam.length; t += DECISION) {
     const next = new Map<string, { orb: Orb; flips: number }>();
@@ -55,7 +57,7 @@ function solve(pi: number, x0: number, pol: Polarity): number {
     }
     beam = [...next.values()];
     if (beam.length > BEAM) {
-      beam.sort((a, b) => b.orb.y - a.orb.y);
+      beam.sort((a, b) => a.orb.y - b.orb.y);
       beam = beam.slice(0, BEAM);
     }
     if (best >= 0) break;

@@ -108,7 +108,9 @@ export class Game {
     if (this.state === 'dying') {
       if (!this.exploded && this.stateTime >= DEATH_FREEZE) {
         this.exploded = true;
-        this.fx.burst(this.orb.x, this.orb.y, this.orb.polarity === 'red' ? COLORS.red : COLORS.blue);
+        // A stall death happens just below the view; burst on the edge so you see where you went.
+        const by = Math.min(this.orb.y, this.camY + VIEW_H - ORB_RADIUS);
+        this.fx.burst(this.orb.x, by, this.orb.polarity === 'red' ? COLORS.red : COLORS.blue);
         this.fx.shake(8, 0.25);
         sfx.death();
       }
@@ -145,15 +147,16 @@ export class Game {
 
     if (++this.trailTick % 2 === 0) this.fx.pushTrail(this.orb.x, this.orb.y);
 
-    let cam = Math.max(this.camY, this.orb.y - VIEW_H * CAMERA_ANCHOR);
-    if (this.runTime > CAMERA_MIN_SPEED_DELAY) cam = Math.max(cam, this.camY + CAMERA_MIN_SPEED * dt);
+    // The camera only ever climbs (toward -y). Lag below the view and the rising edge catches you.
+    let cam = Math.min(this.camY, this.orb.y - VIEW_H * CAMERA_ANCHOR);
+    if (this.runTime > CAMERA_MIN_SPEED_DELAY) cam = Math.min(cam, this.camY - CAMERA_MIN_SPEED * dt);
     this.camY = cam;
-    if (this.orb.y + ORB_RADIUS < this.camY) {
+    if (this.orb.y - ORB_RADIUS > this.camY + VIEW_H) {
       this.die();
       return;
     }
     this.world.update(this.camY);
-    this.score = Math.max(this.score, Math.floor(this.orb.y / SCORE_DIVISOR));
+    this.score = Math.max(this.score, Math.floor(-this.orb.y / SCORE_DIVISOR));
   }
 
   private doFlip(): void {

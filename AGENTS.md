@@ -13,6 +13,7 @@
 - After changing physics or patterns, run `pnpm sim`. Every pattern must stay solvable from every start.
 - Tuning lives in `src/config.ts`. Don't scatter magic numbers.
 - `window.__md` is dev-only (`import.meta.env.DEV`). Keep it out of production bundles.
+- This is the `rise` branch. World y still grows downward on screen, but the orb rises toward -y: buoyancy replaces gravity, the camera only moves to smaller y, score is `-y / SCORE_DIVISOR`, and patterns are entered at their bottom edge. Keep that convention when porting changes from main.
 
 ## Deploy
 Pushing to `main` builds the game and deploys it to GitHub Pages through `.github/workflows/pages.yml`. The base path is `/magnet-drop/`.

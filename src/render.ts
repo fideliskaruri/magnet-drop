@@ -1,4 +1,4 @@
-import { COLORS, ORB_RADIUS, RAIL_FIELD, VIEW_H, VIEW_W } from './config.ts';
+import { COLORS, ORB_RADIUS, RAIL_FIELD, SINK_WARN, VIEW_H, VIEW_W } from './config.ts';
 import type { Game } from './game.ts';
 import { attracts, closestPoint, fieldU, spikeTriangles } from './physics.ts';
 import type { Magnet, Polarity, SpikeRow } from './types.ts';
@@ -71,6 +71,8 @@ export class Renderer {
     }
 
     this.walls();
+    const danger = playing ? Math.max(0, Math.min(1, ((oy - camY) / VIEW_H - SINK_WARN) / (1 - SINK_WARN))) : 0;
+    if (g.state !== 'ready') this.sinkEdge(danger, time);
 
     if (g.fx.flash > 0) {
       ctx.fillStyle = `rgba(255,255,255,${(g.fx.flash / 0.18) * 0.12})`;
@@ -80,7 +82,7 @@ export class Renderer {
     ctx.restore();
 
     if (g.state === 'ready') this.menu(g, time);
-    else this.hud(g);
+    else this.hud(g, danger);
   }
 
   private background(camY: number): void {
@@ -101,6 +103,34 @@ export class Renderer {
       ctx.lineTo(x, VIEW_H);
     }
     ctx.stroke();
+
+    // Two layers of drifting motes at different depths sell the climb.
+    for (const [depth, size, alpha] of [
+      [0.35, 1, 0.25],
+      [0.7, 1.6, 0.4],
+    ] as const) {
+      ctx.fillStyle = `rgba(190,210,255,${alpha})`;
+      const span = VIEW_H + 40;
+      for (let i = 0; i < 18; i++) {
+        const x = (i * 97 + depth * 131) % VIEW_W;
+        const y = ((((i * 211 + depth * 53 - camY * depth) % span) + span) % span) - 20;
+        ctx.fillRect(x, y, size, size * 3);
+      }
+    }
+  }
+
+  /** The bottom of the view is the edge that catches you. It glows brighter the closer you sink to it. */
+  private sinkEdge(danger: number, time: number): void {
+    const { ctx } = this;
+    const pulse = danger > 0.4 ? 0.7 + 0.3 * Math.sin(time * 14) : 1;
+    const h = 30 + 130 * danger;
+    const grad = ctx.createLinearGradient(0, VIEW_H - h, 0, VIEW_H);
+    grad.addColorStop(0, hexA(COLORS.spike, 0));
+    grad.addColorStop(1, hexA(COLORS.spike, 0.12 + 0.5 * danger * pulse));
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, VIEW_H - h, VIEW_W, h);
+    ctx.fillStyle = hexA(COLORS.spike, 0.45 + 0.55 * danger * pulse);
+    ctx.fillRect(0, VIEW_H - 2 - 2 * danger, VIEW_W, 2 + 2 * danger);
   }
 
   private walls(): void {
@@ -306,16 +336,20 @@ export class Renderer {
     ctx.restore();
   }
 
-  private hud(g: Game): void {
+  private hud(g: Game, danger: number): void {
     const { ctx } = this;
     ctx.save();
     ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
     ctx.fillStyle = COLORS.text;
     ctx.shadowColor = 'rgba(0,0,0,0.6)';
     ctx.shadowBlur = 6;
     ctx.font = '800 30px system-ui, sans-serif';
-    ctx.fillText(g.score.toLocaleString('en-US'), VIEW_W / 2, 22);
+    // Threats arrive from the top, so the score lives at the bottom. It fades out of the way when you sink toward it.
+    ctx.textBaseline = 'bottom';
+    ctx.globalAlpha = 1 - 0.85 * danger;
+    ctx.fillText(g.score.toLocaleString('en-US'), VIEW_W / 2, VIEW_H - 18);
+    ctx.globalAlpha = 1;
+    ctx.textBaseline = 'top';
     if (g.state === 'dying' && g.stateTime > 0.6) {
       ctx.font = '700 14px system-ui, sans-serif';
       ctx.fillStyle = COLORS.dim;
@@ -335,7 +369,7 @@ export class Renderer {
     ctx.font = '900 40px system-ui, sans-serif';
     ctx.fillText('MAGNET', VIEW_W / 2, 150);
     ctx.shadowColor = COLORS.red;
-    ctx.fillText('DROP', VIEW_W / 2, 194);
+    ctx.fillText('RISE', VIEW_W / 2, 194);
     ctx.shadowBlur = 0;
     ctx.fillStyle = COLORS.dim;
     ctx.font = '700 13px system-ui, sans-serif';
@@ -345,6 +379,21 @@ export class Renderer {
     ctx.fillText(g.best.toLocaleString('en-US'), VIEW_W / 2, 290);
     const pol: Polarity = Math.floor(time * 1.25) % 2 === 0 ? 'blue' : 'red';
     this.orb(VIEW_W / 2, 400 + Math.sin(time * 3) * 6, pol, false, time);
+    // Chevrons drifting up off the orb: this one goes up.
+    ctx.strokeStyle = COLORS.text;
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    for (let i = 0; i < 3; i++) {
+      const f = (time * 0.8 + i / 3) % 1;
+      const cy = 372 - f * 46;
+      ctx.globalAlpha = Math.sin(f * Math.PI) * 0.7;
+      ctx.beginPath();
+      ctx.moveTo(VIEW_W / 2 - 8, cy + 5);
+      ctx.lineTo(VIEW_W / 2, cy - 3);
+      ctx.lineTo(VIEW_W / 2 + 8, cy + 5);
+      ctx.stroke();
+    }
     ctx.globalAlpha = 0.55 + 0.45 * Math.sin(time * 4);
     ctx.fillStyle = COLORS.text;
     ctx.font = '800 18px system-ui, sans-serif';
@@ -353,6 +402,7 @@ export class Renderer {
     ctx.fillStyle = COLORS.dim;
     ctx.font = '600 12px system-ui, sans-serif';
     ctx.fillText('Tap to flip polarity. Opposites attract.', VIEW_W / 2, 560);
+    ctx.fillText('Keep rising. Sink off the bottom and you lose.', VIEW_W / 2, 580);
     ctx.restore();
   }
 }

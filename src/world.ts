@@ -2,7 +2,8 @@ import { PATTERN_GAP, VIEW_H } from './config.ts';
 import { PATTERNS, TUTORIAL_COUNT } from './patterns.ts';
 import type { Magnet, PlacedPattern, SpikeRow } from './types.ts';
 
-const FIRST_TOP = 240;
+/** The orb starts at y = 0 and rises toward -y; the first pattern's bottom sits this far above it. */
+const FIRST_BOTTOM = -240;
 
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
@@ -22,7 +23,7 @@ export class World {
   private rand: () => number;
   private count = 0;
   private last = -1;
-  private nextTop = FIRST_TOP;
+  private nextBottom = FIRST_BOTTOM;
   private readonly forced: number[];
 
   /** `forced` pins the first pattern indices (used by tests and the simulator). */
@@ -31,15 +32,15 @@ export class World {
     this.forced = forced;
   }
 
-  /** Keep patterns spawned two screens below the camera and drop ones well above it. */
+  /** Keep patterns spawned a screen above the view and drop ones that fell well below it. */
   update(camY: number): void {
     let changed = false;
-    while (this.nextTop < camY + VIEW_H * 2) {
+    while (this.nextBottom > camY - VIEW_H) {
       this.spawn();
       changed = true;
     }
     const before = this.placed.length;
-    this.placed = this.placed.filter((p) => p.top + p.height > camY - 200);
+    this.placed = this.placed.filter((p) => p.top < camY + VIEW_H + 200);
     if (changed || this.placed.length !== before) {
       this.magnets = this.placed.flatMap((p) => p.magnets);
       this.spikes = this.placed.flatMap((p) => p.spikes);
@@ -61,7 +62,7 @@ export class World {
     const index = this.pick();
     this.last = index;
     const p = PATTERNS[index]!;
-    const top = this.nextTop;
+    const top = this.nextBottom - p.height;
     this.placed.push({
       index,
       top,
@@ -71,10 +72,10 @@ export class World {
       ),
       spikes: p.spikes.map((s) => ({ ...s, y: s.y + top })),
     });
-    this.nextTop = top + p.height + PATTERN_GAP;
+    this.nextBottom = top - PATTERN_GAP;
   }
 
   patternAt(y: number): PlacedPattern | undefined {
-    return this.placed.find((p) => y >= p.top && y < p.top + p.height + PATTERN_GAP);
+    return this.placed.find((p) => y <= p.top + p.height && y > p.top - PATTERN_GAP);
   }
 }

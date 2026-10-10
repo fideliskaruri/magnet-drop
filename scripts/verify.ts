@@ -8,8 +8,8 @@ import type { DebugHook } from '../src/debug.ts';
 
 type Snap = ReturnType<DebugHook['snapshot']>;
 
-const BASE = process.argv[2] ?? 'http://localhost:5180/';
-const OUT = join(tmpdir(), 'agent-scratch', 'magnet-drop');
+const BASE = process.argv[2] ?? 'http://localhost:5191/';
+const OUT = join(tmpdir(), 'agent-scratch', 'magnet-drop-rise');
 mkdirSync(OUT, { recursive: true });
 
 const results: { name: string; ok: boolean; detail: string }[] = [];
@@ -74,22 +74,34 @@ try {
   const p2 = (await snap(page)).polarity;
   check('start-and-flip', s.state === 'playing' && p0 === 'blue' && p1 === 'red' && p2 === 'blue', `${s.state} ${p0}->${p1}->${p2}`);
 
-  // 3. Attract vs repel on pattern 1 (red magnet at x=260, orb falls at x=180).
+  // 2b. The orb rises: y goes up the screen (toward -y), the camera climbs with it and the score counts height.
+  await startRun(page, [9]);
+  const r0 = await snap(page);
+  await sleep(900);
+  const r1 = await snap(page);
+  const screenFrac = (r1.y - r1.camY) / 640;
+  check(
+    'orb-rises-camera-follows',
+    r1.state === 'playing' && r1.vy < -150 && r1.y < r0.y - 150 && r1.camY < r0.camY - 100 && r1.score > 0 && screenFrac > 0.55 && screenFrac < 0.75,
+    `y ${r0.y.toFixed(0)}->${r1.y.toFixed(0)} vy=${r1.vy.toFixed(0)} camY ${r0.camY.toFixed(0)}->${r1.camY.toFixed(0)} score=${r1.score} orb at ${(screenFrac * 100).toFixed(0)}% of view`,
+  );
+
+  // 3. Attract vs repel on pattern 1 (red magnet at x=260, orb rises at x=180).
   await startRun(page, [0]);
-  let a = await waitFor(page, (x) => x.patternTop !== null && x.y > x.patternTop + 80, 3000);
+  let a = await waitFor(page, (x) => x.patternBottom !== null && x.y < x.patternBottom - 80, 3000);
   await sleep(250);
   let b = await snap(page);
   const attractVx = b.vx;
   check('attract-pulls-toward', a !== null && attractVx > 20, `blue orb vx=${attractVx.toFixed(1)} (magnet is to the right)`);
   await startRun(page, [0]);
   await tap(page);
-  a = await waitFor(page, (x) => x.patternTop !== null && x.y > x.patternTop + 80, 3000);
+  a = await waitFor(page, (x) => x.patternBottom !== null && x.y < x.patternBottom - 80, 3000);
   await sleep(250);
   b = await snap(page);
   await shot(page, '03-repel');
   check('repel-pushes-away', a !== null && b.polarity === 'red' && b.vx < -20, `red orb vx=${b.vx.toFixed(1)}`);
 
-  // 4. Stick and launch on pattern 4 (red magnet the blue orb falls onto).
+  // 4. Stick and launch on pattern 4 (red magnet the blue orb rises into).
   await startRun(page, [3]);
   const stuck = await waitFor(page, (x) => x.stuck, 4000);
   await sleep(150);
@@ -102,7 +114,7 @@ try {
   await shot(page, '04-launched');
   check('stick-and-launch', stuck !== null && afterLaunch.launches === 1 && !afterLaunch.stuck && speed >= 550, `stuck=${stuck !== null} launches=${afterLaunch.launches} speed=${speed.toFixed(0)}`);
 
-  // 5. Death and fast restart on pattern 2 without flipping (blue magnet pushes the orb onto the shelf).
+  // 5. Death and fast restart on pattern 2 without flipping (blue magnet pushes the orb into the spike ceiling).
   await page.evaluate(() => localStorage.clear());
   await startRun(page, [1]);
   const dead = await waitFor(page, (x) => x.state === 'dying', 5000);
@@ -114,19 +126,28 @@ try {
   await tap(page);
   const back = await waitFor(page, (x) => x.state === 'playing', 1000);
   const restartMs = Date.now() - t0;
-  check('death', dead !== null, `died at score ${deathScore}`);
+  check('death-on-spike-ceiling', dead !== null && dead.y - dead.camY < 600, `died at score ${deathScore}, orb ${dead ? (dead.y - dead.camY).toFixed(0) : '-'} px down the view (on screen, so spikes, not sinking)`);
   check('restart-under-1s', back !== null && back.score < deathScore, `restart took ${restartMs} ms after the 650 ms lockout, score reset to ${back?.score}`);
   await page.reload();
   await page.waitForFunction(() => window.__md !== undefined);
   const best = (await snap(page)).best;
-  check('best-persists', best === deathScore && best > 0, `best after reload=${best}`);
+  const keys = await page.evaluate(() => Object.keys(localStorage));
+  check('best-persists', best === deathScore && best > 0 && keys.includes('magnetdrop.rise.best') && !keys.includes('magnetdrop.best'), `best after reload=${best} keys=${keys.join(',')}`);
 
-  // 6. Stall pressure: hang on the Rest magnet and get scrolled off the top.
+  // 6. Stall pressure: hang on the Rest magnet and sink off the bottom as the camera keeps climbing.
   await startRun(page, [9]);
   await tap(page);
   const hung = await waitFor(page, (x) => x.stuck, 4000);
+  const sinking = await waitFor(page, (x) => x.state === 'playing' && x.y - x.camY > 600, 12000);
+  await shot(page, '06-sinking-edge-warns');
   const stallDeath = await waitFor(page, (x) => x.state === 'dying', 12000);
-  check('stall-kills', hung !== null && stallDeath !== null, `stuck=${hung !== null} died=${stallDeath !== null} at y=${stallDeath?.y.toFixed(0)} camY=${stallDeath?.camY.toFixed(0)}`);
+  await sleep(150);
+  await shot(page, '06-sink-death');
+  check(
+    'stall-sinks-off-bottom',
+    hung !== null && sinking !== null && stallDeath !== null && stallDeath.y - 11 > stallDeath.camY + 640,
+    `stuck=${hung !== null} died=${stallDeath !== null} at y=${stallDeath?.y.toFixed(0)} view bottom=${stallDeath ? (stallDeath.camY + 640).toFixed(0) : '-'}`,
+  );
 
   // 7. Screenshot every pattern.
   for (let i = 0; i < 10; i++) {

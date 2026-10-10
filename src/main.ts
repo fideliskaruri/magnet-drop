@@ -21,7 +21,7 @@ window.addEventListener(
 );
 window.addEventListener('keydown', (e) => {
   if (e.repeat) return;
-  if (e.code === 'Space' || e.code === 'Enter' || e.code === 'ArrowDown') {
+  if (e.code === 'Space' || e.code === 'Enter' || e.code === 'ArrowUp' || e.code === 'ArrowDown') {
     e.preventDefault();
     game.tap();
   }
