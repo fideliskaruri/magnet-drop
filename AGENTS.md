@@ -13,6 +13,7 @@
 - After changing physics or patterns, run `pnpm sim`. Every pattern must stay solvable from every start.
 - Tuning lives in `src/config.ts`. Don't scatter magic numbers.
 - `window.__md` is dev-only (`import.meta.env.DEV`). Keep it out of production bundles.
+- Audio (`src/audio.ts`) stays fully synthesised. Continuous layers are built once and only have their params glided; never create audio nodes per frame. One-shots go through the capped voice pool. `verify` renders every sound offline and fails on silence or clipping.
 
 ## Deploy
 Pushing to `main` builds the game and deploys it to GitHub Pages through `.github/workflows/pages.yml`. The base path is `/magnet-drop/`.

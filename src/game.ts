@@ -1,5 +1,6 @@
-import { haptic, sfx, unlockAudio } from './audio.ts';
+import { haptic, SILENT_MIX, sound, unlockAudio, type DeathCause, type Mix } from './audio.ts';
 import {
+  AUDIO,
   AUTO_READY,
   BEST_KEY,
   CAMERA_ANCHOR,
@@ -9,16 +10,24 @@ import {
   DEATH_FREEZE,
   ORB_RADIUS,
   RESTART_LOCK,
+  MAX_SPEED,
   SCORE_DIVISOR,
   VIEW_H,
   VIEW_W,
 } from './config.ts';
 import { Fx } from './fx.ts';
-import { flip, step } from './physics.ts';
-import type { GameStateName, Orb } from './types.ts';
+import { attracts, closestPoint, fieldU, flip, step } from './physics.ts';
+import type { GameStateName, Orb, SpikeRow } from './types.ts';
 import { World } from './world.ts';
 
 const LAUNCH_HITSTOP = 0.035;
+
+/** Edge-to-edge gap between the orb and a spike row's bounding box. */
+function spikeGap(row: SpikeRow, x: number, y: number): number {
+  const dx = Math.max(row.x - x, 0, x - (row.x + row.w));
+  const dy = Math.max(row.y - y, 0, y - (row.y + row.h));
+  return Math.hypot(dx, dy) - ORB_RADIUS;
+}
 
 function loadBest(): number {
   try {
@@ -42,11 +51,23 @@ export class Game {
   hitstop = 0;
   exploded = false;
   launches = 0;
+  deathCause: DeathCause = 'spikes';
   /** Set by the dev hook to make runs reproducible. */
   seedOverride: number | null = null;
   forcedPatterns: number[] = [];
   private taps = 0;
   private trailTick = 0;
+  // Sound state: these only drive audio and never touch the simulation.
+  private readonly mixOut: Mix = { ...SILENT_MIX };
+  private stuckTime = 0;
+  private lastFlipAt = -1;
+  private combo = 0;
+  private lastLaunchAt = -1;
+  private launchChain = 0;
+  private nextMilestone = AUDIO.milestoneEvery;
+  private bestAtStart = 0;
+  private passedBest = false;
+  private nearArmed = false;
 
   private static freshOrb(): Orb {
     const x = VIEW_W / 2;
@@ -70,7 +91,18 @@ export class Game {
     this.hitstop = 0;
     this.launches = 0;
     this.exploded = false;
+    this.stuckTime = 0;
+    this.lastFlipAt = -1;
+    this.combo = 0;
+    this.lastLaunchAt = -1;
+    this.launchChain = 0;
+    this.nextMilestone = AUDIO.milestoneEvery;
+    this.bestAtStart = this.best;
+    this.passedBest = false;
+    this.nearArmed = false;
+    this.deathCause = 'spikes';
     this.setState('playing');
+    sound()?.start();
   }
 
   private setState(s: GameStateName): void {
@@ -78,8 +110,9 @@ export class Game {
     this.stateTime = 0;
   }
 
-  private die(): void {
+  private die(cause: DeathCause): void {
     if (this.state !== 'playing') return;
+    this.deathCause = cause;
     this.setState('dying');
     this.orb.stuck = null;
     haptic([30, 40, 30]);
@@ -110,7 +143,7 @@ export class Game {
         this.exploded = true;
         this.fx.burst(this.orb.x, this.orb.y, this.orb.polarity === 'red' ? COLORS.red : COLORS.blue);
         this.fx.shake(8, 0.25);
-        sfx.death();
+        sound()?.death(this.deathCause);
       }
       if (this.exploded) this.fx.update(dt);
       if (taps > 0 && this.stateTime >= RESTART_LOCK) this.startRun();
@@ -132,13 +165,18 @@ export class Game {
     }
     this.runTime += dt;
 
+    const preVx = this.orb.vx;
+    const preSpeed = Math.hypot(this.orb.vx, this.orb.vy);
     const ev = step(this.orb, this.world.magnets, this.world.spikes, dt);
     if (ev === 'dead') {
-      this.die();
+      this.die('spikes');
       return;
     }
+    this.stuckTime = this.orb.stuck ? this.stuckTime + dt : 0;
+    if (ev === 'bounce') sound()?.bounce(preSpeed / AUDIO.impactFull, this.pan());
+    else if (ev === 'wall') sound()?.wall(Math.abs(preVx) / AUDIO.impactFull, this.pan());
     if (ev === 'stick') {
-      sfx.stick();
+      sound()?.stick(preSpeed / AUDIO.impactFull, this.orb.stuck?.magnet.polarity ?? 'red', this.pan());
       haptic(5);
       this.fx.pulse(this.orb.x, this.orb.y, this.color(), 18, 0.1, 2);
     }
@@ -149,24 +187,91 @@ export class Game {
     if (this.runTime > CAMERA_MIN_SPEED_DELAY) cam = Math.max(cam, this.camY + CAMERA_MIN_SPEED * dt);
     this.camY = cam;
     if (this.orb.y + ORB_RADIUS < this.camY) {
-      this.die();
+      this.die('stall');
       return;
     }
     this.world.update(this.camY);
     this.score = Math.max(this.score, Math.floor(this.orb.y / SCORE_DIVISOR));
+    this.scoreSounds();
+    this.nearMissCheck();
+  }
+
+  private scoreSounds(): void {
+    while (this.score >= this.nextMilestone) {
+      sound()?.milestone(Math.round(this.nextMilestone / AUDIO.milestoneEvery) - 1);
+      this.nextMilestone += AUDIO.milestoneEvery;
+    }
+    if (!this.passedBest && this.bestAtStart > 0 && this.score > this.bestAtStart) {
+      this.passedBest = true;
+      sound()?.best();
+    }
+  }
+
+  private nearestSpikeGap(): number {
+    let gap = Infinity;
+    for (const row of this.world.spikes) gap = Math.min(gap, spikeGap(row, this.orb.x, this.orb.y));
+    return gap;
+  }
+
+  /** Arm when the orb skims spikes, fire once it has clearly got away. */
+  private nearMissCheck(): void {
+    const gap = this.nearestSpikeGap();
+    if (gap < AUDIO.nearMissGap) this.nearArmed = true;
+    else if (this.nearArmed && gap > AUDIO.nearMissGap * 4) {
+      this.nearArmed = false;
+      sound()?.nearMiss(this.pan());
+    }
+  }
+
+  private pan(): number {
+    return (this.orb.x / VIEW_W) * 2 - 1;
+  }
+
+  /** Levels for the continuous sound layers. Reuses one object, so it allocates nothing per frame. */
+  mix(): Readonly<Mix> {
+    const m = this.mixOut;
+    if (this.state !== 'playing') {
+      Object.assign(m, SILENT_MIX);
+      return m;
+    }
+    let pull = 0;
+    let push = 0;
+    if (!this.orb.stuck) {
+      for (const mag of this.world.magnets) {
+        const { cx, cy } = closestPoint(mag, this.orb.x, this.orb.y);
+        const u = fieldU(mag, Math.hypot(cx - this.orb.x, cy - this.orb.y));
+        if (u <= 0) continue;
+        if (attracts(this.orb.polarity, mag.polarity)) pull = Math.max(pull, u);
+        else push = Math.max(push, u);
+      }
+    }
+    const spike = 1 - Math.max(0, this.nearestSpikeGap()) / AUDIO.spikeDangerRange;
+    const stall = 1 - (this.orb.y - this.camY) / AUDIO.stallDangerRange;
+    m.attract = pull;
+    m.repel = push;
+    m.stuck = this.orb.stuck ? 1 : 0;
+    m.stuckTime = this.stuckTime;
+    m.speed = Math.hypot(this.orb.vx, this.orb.vy) / MAX_SPEED;
+    m.danger = Math.max(0, Math.min(1, Math.max(spike, stall)));
+    return m;
   }
 
   private doFlip(): void {
     const launched = flip(this.orb);
     const c = this.color();
     this.fx.pulse(this.orb.x, this.orb.y, c);
-    sfx.flip(this.orb.polarity);
+    const now = this.runTime;
+    this.combo = this.lastFlipAt >= 0 && now - this.lastFlipAt < AUDIO.comboWindow ? Math.min(this.combo + 1, AUDIO.comboMax) : 0;
+    this.lastFlipAt = now;
+    sound()?.flip(this.orb.polarity, this.combo, this.pan());
     if (launched) {
+      this.launchChain = this.lastLaunchAt >= 0 && now - this.lastLaunchAt < AUDIO.launchChainWindow ? Math.min(this.launchChain + 1, AUDIO.launchChainMax) : 0;
+      this.lastLaunchAt = now;
       this.launches++;
       this.hitstop = LAUNCH_HITSTOP;
       this.fx.pulse(this.orb.x, this.orb.y, c, 55, 0.25, 4);
       this.fx.shake(6, 0.12);
-      sfx.launch();
+      sound()?.launch(this.launchChain, this.pan());
       haptic(20);
     } else {
       haptic(8);
