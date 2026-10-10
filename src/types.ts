@@ -63,3 +63,16 @@ export interface Orb {
 }
 
 export type GameStateName = 'ready' | 'playing' | 'dying';
+
+export type PowerKind = 'boost' | 'shield' | 'phase';
+
+/** A collectible power-up token floating in the arena. */
+export interface Pickup {
+  kind: PowerKind;
+  x: number;
+  y: number;
+  /** Spawn position, so the bob animation has a fixed anchor. */
+  homeX: number;
+  homeY: number;
+  taken: boolean;
+}

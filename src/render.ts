@@ -1,7 +1,7 @@
-import { COLORS, ORB_RADIUS, RAIL_FIELD, VIEW_H, VIEW_W } from './config.ts';
-import type { Game } from './game.ts';
+import { BOOST_TIME, COLORS, ORB_RADIUS, PHASE_TIME, PICKUP_RADIUS, POWER_WARN, RAIL_FIELD, VIEW_H, VIEW_W } from './config.ts';
+import { POWER_LABEL, type Game } from './game.ts';
 import { attracts, closestPoint, fieldU, spikeTriangles } from './physics.ts';
-import type { Magnet, Polarity, SpikeRow } from './types.ts';
+import type { Magnet, Pickup, Polarity, PowerKind, SpikeRow } from './types.ts';
 
 const colorOf = (p: Polarity): string => (p === 'red' ? COLORS.red : COLORS.blue);
 
@@ -63,11 +63,20 @@ export class Renderer {
       for (const m of g.world.magnets) if (magnetVisible(m, top, bottom)) this.magnetHalo(m);
       for (const row of g.world.spikes) if (row.y + row.h > top && row.y < bottom) this.spikes(row);
       for (const m of g.world.magnets) if (magnetVisible(m, top, bottom)) this.magnet(m, time);
-      if (playing) this.fieldHints(g, ox, oy, time);
+      for (const k of g.world.pickups) if (!k.taken && k.y > top && k.y < bottom) this.pickup(k, time);
+      if (playing && !g.boosting) this.fieldHints(g, ox, oy, time);
       this.trail(g);
-      if (!(g.state === 'dying' && g.exploded)) this.orb(ox, oy, g.orb.polarity, g.orb.stuck !== null, time);
+      if (!(g.state === 'dying' && g.exploded)) {
+        if (playing && g.boosting) this.boostFlame(ox, oy, time);
+        ctx.save();
+        if (playing && g.phase > 0) ctx.globalAlpha = blinkOn(g.phase, time) ? 0.35 : 0.8;
+        this.orb(ox, oy, g.orb.polarity, g.orb.stuck !== null, time);
+        ctx.restore();
+        if (playing) this.powerAura(g, ox, oy, time);
+      }
       this.effects(g);
       ctx.restore();
+      this.floatTexts(g);
     }
 
     this.walls();
@@ -80,7 +89,7 @@ export class Renderer {
     ctx.restore();
 
     if (g.state === 'ready') this.menu(g, time);
-    else this.hud(g);
+    else this.hud(g, time);
   }
 
   private background(camY: number): void {
@@ -245,7 +254,7 @@ export class Renderer {
     if (pts.length < 2) return;
     ctx.save();
     ctx.lineCap = 'round';
-    const c = g.color();
+    const c = g.boosting && g.state === 'playing' ? COLORS.boost : g.color();
     for (let i = 1; i < pts.length; i++) {
       const a = i / pts.length;
       ctx.strokeStyle = hexA(c, a * 0.6);
@@ -306,7 +315,178 @@ export class Renderer {
     ctx.restore();
   }
 
-  private hud(g: Game): void {
+  private pickup(k: Pickup, time: number): void {
+    const { ctx } = this;
+    const c = POWER_LABEL[k.kind].color;
+    const y = k.y + Math.sin(time * 3 + k.homeX) * 3;
+    const r = PICKUP_RADIUS;
+    ctx.save();
+    const grad = ctx.createRadialGradient(k.x, y, r * 0.5, k.x, y, r * 3);
+    grad.addColorStop(0, hexA(c, 0.3));
+    grad.addColorStop(1, hexA(c, 0));
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(k.x, y, r * 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowColor = c;
+    ctx.shadowBlur = 14;
+    ctx.fillStyle = '#0d1222';
+    ctx.strokeStyle = c;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
+      const px = k.x + Math.cos(a) * r;
+      const py = y + Math.sin(a) * r;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = hexA(c, 0.7);
+    ctx.setLineDash([4, 6]);
+    ctx.lineDashOffset = -time * 20;
+    ctx.beginPath();
+    ctx.arc(k.x, y, r + 6, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    powerIcon(ctx, k.kind, k.x, y, r * 0.62, c);
+    ctx.fillStyle = c;
+    ctx.font = '800 10px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(POWER_LABEL[k.kind].name, k.x, y + r + 9);
+    ctx.restore();
+  }
+
+  /** Green exhaust above the orb while it dives. */
+  private boostFlame(x: number, y: number, time: number): void {
+    const { ctx } = this;
+    ctx.save();
+    ctx.lineCap = 'round';
+    for (let i = 0; i < 5; i++) {
+      const lx = x + (i - 2) * 4.5;
+      const len = 26 + 22 * Math.abs(Math.sin(time * 23 + i * 1.7));
+      const grad = ctx.createLinearGradient(lx, y, lx, y - len);
+      grad.addColorStop(0, hexA(COLORS.boost, 0.85));
+      grad.addColorStop(1, hexA(COLORS.boost, 0));
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = i === 2 ? 5 : 3;
+      ctx.beginPath();
+      ctx.moveTo(lx, y - 4);
+      ctx.lineTo(lx, y - len);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /** Shield bubble, phase outline and boost glow around the orb. */
+  private powerAura(g: Game, x: number, y: number, time: number): void {
+    const { ctx } = this;
+    ctx.save();
+    if (g.shield) {
+      const r = ORB_RADIUS + 7 + Math.sin(time * 5) * 1;
+      const grad = ctx.createRadialGradient(x - 4, y - 5, 1, x, y, r);
+      grad.addColorStop(0, 'rgba(255,255,255,0.05)');
+      grad.addColorStop(0.8, 'rgba(244,247,255,0.12)');
+      grad.addColorStop(1, 'rgba(244,247,255,0.35)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowColor = COLORS.shield;
+      ctx.shadowBlur = 10;
+      ctx.strokeStyle = hexA(COLORS.shield, 0.85);
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(x, y, r - 3, Math.PI * 1.1, Math.PI * 1.4);
+      ctx.stroke();
+    }
+    if (g.phase > 0 && blinkOn(g.phase, time)) {
+      ctx.strokeStyle = hexA(COLORS.phase, 0.9);
+      ctx.shadowColor = COLORS.phase;
+      ctx.shadowBlur = 12;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 4]);
+      ctx.lineDashOffset = time * 30;
+      ctx.beginPath();
+      ctx.arc(x, y, ORB_RADIUS + 3, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    if (g.grace > 0 && !g.boosting) {
+      ctx.strokeStyle = hexA(COLORS.text, Math.min(1, g.grace * 2) * 0.6);
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(x, y, ORB_RADIUS + 12, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  private floatTexts(g: Game): void {
+    const { ctx } = this;
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const t of g.fx.texts) {
+      const k = t.age / t.life;
+      const pop = Math.min(1, t.age / 0.12);
+      ctx.globalAlpha = k < 0.7 ? 1 : 1 - (k - 0.7) / 0.3;
+      ctx.fillStyle = t.color;
+      ctx.shadowColor = t.color;
+      ctx.shadowBlur = 12;
+      ctx.font = `900 ${Math.round(16 + 8 * pop)}px system-ui, sans-serif`;
+      ctx.fillText(t.text, t.x, t.y);
+      if (t.sub) {
+        ctx.shadowColor = 'rgba(0,0,0,0.8)';
+        ctx.shadowBlur = 6;
+        ctx.fillStyle = COLORS.text;
+        ctx.font = '700 12px system-ui, sans-serif';
+        ctx.fillText(t.sub, t.x, t.y + 20);
+      }
+    }
+    ctx.restore();
+  }
+
+  /** Active power-ups under the score, each ring draining as it runs out. */
+  private powerBadges(g: Game, time: number): void {
+    const items: { kind: PowerKind; frac: number; blink: boolean }[] = [];
+    if (g.boosting) items.push({ kind: 'boost', frac: g.boost / BOOST_TIME, blink: !blinkOn(g.boost, time) });
+    if (g.phase > 0) items.push({ kind: 'phase', frac: g.phase / PHASE_TIME, blink: !blinkOn(g.phase, time) });
+    if (g.shield) items.push({ kind: 'shield', frac: 1, blink: false });
+    const { ctx } = this;
+    items.forEach((it, i) => {
+      const x = VIEW_W / 2 + (i - (items.length - 1) / 2) * 38;
+      const y = 76;
+      const c = POWER_LABEL[it.kind].color;
+      ctx.save();
+      ctx.globalAlpha = it.blink ? 0.35 : 1;
+      ctx.fillStyle = 'rgba(13,18,34,0.85)';
+      ctx.beginPath();
+      ctx.arc(x, y, 15, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = hexA(c, 0.25);
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.strokeStyle = c;
+      ctx.beginPath();
+      ctx.arc(x, y, 15, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.max(0, it.frac));
+      ctx.stroke();
+      powerIcon(ctx, it.kind, x, y, 8, c);
+      ctx.restore();
+    });
+  }
+
+  private hud(g: Game, time: number): void {
+    if (g.state === 'playing') this.powerBadges(g, time);
     const { ctx } = this;
     ctx.save();
     ctx.textAlign = 'center';
@@ -352,9 +532,73 @@ export class Renderer {
     ctx.globalAlpha = 1;
     ctx.fillStyle = COLORS.dim;
     ctx.font = '600 12px system-ui, sans-serif';
-    ctx.fillText('Tap to flip polarity. Opposites attract.', VIEW_W / 2, 560);
+    ctx.fillText('Tap to flip polarity. Opposites attract.', VIEW_W / 2, 548);
+    const kinds: PowerKind[] = ['boost', 'shield', 'phase'];
+    kinds.forEach((k, i) => {
+      const x = VIEW_W / 2 + (i - 1) * 84;
+      powerIcon(ctx, k, x - 24, 586, 7, POWER_LABEL[k].color);
+      ctx.fillStyle = POWER_LABEL[k].color;
+      ctx.font = '800 11px system-ui, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(POWER_LABEL[k].name, x - 13, 587);
+    });
     ctx.restore();
   }
+}
+
+/** Blink during the last POWER_WARN seconds so the player sees it ending. */
+function blinkOn(left: number, time: number): boolean {
+  return left > POWER_WARN || Math.floor(time * 10) % 2 === 0;
+}
+
+/** Simple vector glyphs, so every device draws them the same. */
+function powerIcon(ctx: CanvasRenderingContext2D, kind: PowerKind, x: number, y: number, s: number, color: string): void {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = Math.max(1.5, s * 0.28);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  if (kind === 'boost') {
+    for (const oy of [-0.45, 0.25]) {
+      ctx.moveTo(x - s * 0.7, y + oy * s - s * 0.3);
+      ctx.lineTo(x, y + oy * s + s * 0.35);
+      ctx.lineTo(x + s * 0.7, y + oy * s - s * 0.3);
+    }
+    ctx.stroke();
+  } else if (kind === 'shield') {
+    ctx.moveTo(x, y - s * 0.9);
+    ctx.lineTo(x + s * 0.75, y - s * 0.55);
+    ctx.quadraticCurveTo(x + s * 0.7, y + s * 0.5, x, y + s * 0.95);
+    ctx.quadraticCurveTo(x - s * 0.7, y + s * 0.5, x - s * 0.75, y - s * 0.55);
+    ctx.closePath();
+    ctx.globalAlpha = 0.35;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.stroke();
+  } else {
+    // A ghost: round head, wavy hem.
+    const w = s * 0.75;
+    ctx.moveTo(x - w, y + s * 0.8);
+    ctx.lineTo(x - w, y - s * 0.1);
+    ctx.arc(x, y - s * 0.1, w, Math.PI, 0);
+    ctx.lineTo(x + w, y + s * 0.8);
+    for (let i = 0; i < 3; i++) {
+      const x0 = x + w - (i * 2 * w) / 3;
+      ctx.quadraticCurveTo(x0 - w / 3, y + s * 0.4, x0 - (2 * w) / 3, y + s * 0.8);
+    }
+    ctx.globalAlpha = 0.35;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.stroke();
+    ctx.fillStyle = '#0d1222';
+    ctx.beginPath();
+    ctx.arc(x - w * 0.38, y - s * 0.12, s * 0.13, 0, Math.PI * 2);
+    ctx.arc(x + w * 0.38, y - s * 0.12, s * 0.13, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
 }
 
 function magnetVisible(m: Magnet, top: number, bottom: number): boolean {

@@ -13,6 +13,7 @@
 - After changing physics or patterns, run `pnpm sim`. Every pattern must stay solvable from every start.
 - Tuning lives in `src/config.ts`. Don't scatter magic numbers.
 - `window.__md` is dev-only (`import.meta.env.DEV`). Keep it out of production bundles.
+- Power-ups (`powerups` branch): tokens only spawn in the gaps between patterns, and the booster always releases the orb in a gap, so `sim`'s fairness guarantee still covers every point where the player regains control. Forced-pattern runs (tests) get no random tokens; `verify` places them with `__md.spawnPickup`.
 
 ## Deploy
 Pushing to `main` builds the game and deploys it to GitHub Pages through `.github/workflows/pages.yml`. The base path is `/magnet-drop/`.

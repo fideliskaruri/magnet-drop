@@ -17,6 +17,18 @@ import type { Magnet, Orb, Polarity, SpikeRow } from './types.ts';
 
 export type StepEvent = 'none' | 'stick' | 'bounce' | 'wall' | 'dead';
 
+/** Power-up overrides. Omitting them gives the plain game the simulator checks. */
+export interface StepMods {
+  /** Skip magnet forces and collisions (the booster dive). */
+  ignoreMagnets?: boolean;
+  /** Spikes cannot kill (phaser, booster, shield grace). */
+  spikeProof?: boolean;
+  /** Replaces TERMINAL_FALL. */
+  terminal?: number;
+}
+
+const NO_MODS: StepMods = {};
+
 export function attracts(orb: Polarity, magnet: Polarity): boolean {
   return orb !== magnet;
 }
@@ -49,17 +61,19 @@ export function flip(orb: Orb): boolean {
   return true;
 }
 
-export function step(orb: Orb, magnets: readonly Magnet[], spikes: readonly SpikeRow[], dt: number): StepEvent {
+export function step(orb: Orb, magnets: readonly Magnet[], spikes: readonly SpikeRow[], dt: number, mods: StepMods = NO_MODS): StepEvent {
   orb.prevX = orb.x;
   orb.prevY = orb.y;
   let event: StepEvent = 'none';
+  const terminal = mods.terminal ?? TERMINAL_FALL;
+  const field = mods.ignoreMagnets ? [] : magnets;
 
   if (orb.stuck) {
     stepStuck(orb, dt);
   } else {
     let ax = 0;
     let ay = GRAVITY;
-    for (const m of magnets) {
+    for (const m of field) {
       const { cx, cy } = closestPoint(m, orb.x, orb.y);
       const dx = cx - orb.x;
       const dy = cy - orb.y;
@@ -75,7 +89,7 @@ export function step(orb: Orb, magnets: readonly Magnet[], spikes: readonly Spik
     orb.vx += ax * dt;
     orb.vy += ay * dt;
     orb.vx *= Math.exp(-AIR_DAMPING_X * dt);
-    if (orb.vy > TERMINAL_FALL) orb.vy -= (orb.vy - TERMINAL_FALL) * Math.min(1, 3 * dt);
+    if (orb.vy > terminal) orb.vy -= (orb.vy - terminal) * Math.min(1, 3 * dt);
     const sp = Math.hypot(orb.vx, orb.vy);
     if (sp > MAX_SPEED) {
       orb.vx *= MAX_SPEED / sp;
@@ -84,7 +98,7 @@ export function step(orb: Orb, magnets: readonly Magnet[], spikes: readonly Spik
     orb.x += orb.vx * dt;
     orb.y += orb.vy * dt;
 
-    for (const m of magnets) {
+    for (const m of field) {
       const { cx, cy } = closestPoint(m, orb.x, orb.y);
       let nx = orb.x - cx;
       let ny = orb.y - cy;
@@ -130,6 +144,7 @@ export function step(orb: Orb, magnets: readonly Magnet[], spikes: readonly Spik
     }
   }
 
+  if (mods.spikeProof) return event;
   for (const row of spikes) {
     if (hitsSpikes(row, orb.x, orb.y, ORB_RADIUS - SPIKE_FORGIVENESS)) return 'dead';
   }

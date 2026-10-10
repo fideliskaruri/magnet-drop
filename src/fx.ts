@@ -21,10 +21,21 @@ interface Particle {
   size: number;
 }
 
+export interface FloatText {
+  text: string;
+  sub: string;
+  color: string;
+  x: number;
+  y: number;
+  age: number;
+  life: number;
+}
+
 export class Fx {
   trail: { x: number; y: number }[] = [];
   pulses: Pulse[] = [];
   particles: Particle[] = [];
+  texts: FloatText[] = [];
   shakeMag = 0;
   shakeTime = 0;
   flash = 0;
@@ -33,9 +44,35 @@ export class Fx {
     this.trail = [];
     this.pulses = [];
     this.particles = [];
+    this.texts = [];
     this.shakeMag = 0;
     this.shakeTime = 0;
     this.flash = 0;
+  }
+
+  /** A label that floats up from a point on screen (screen coordinates, kept below the score and badges). */
+  text(text: string, sub: string, color: string, x: number, y: number): void {
+    this.texts = this.texts.filter((t) => t.age > 0.4);
+    this.texts.push({ text, sub, color, x: Math.max(80, Math.min(280, x)), y: Math.max(150, Math.min(560, y)), age: 0, life: 1.3 });
+  }
+
+  /** Fragments flung out across a width, for smashed spikes and a popped shield. */
+  shards(x: number, y: number, width: number, color: string): void {
+    const n = Math.max(8, Math.min(22, Math.round(width / 8)));
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 80 + Math.random() * 220;
+      this.particles.push({
+        x: x + (Math.random() - 0.5) * width,
+        y,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp - 60,
+        age: 0,
+        life: 0.4 + Math.random() * 0.35,
+        color,
+        size: 1.5 + Math.random() * 2,
+      });
+    }
   }
 
   pushTrail(x: number, y: number): void {
@@ -82,6 +119,11 @@ export class Fx {
       p.vy *= Math.exp(-3 * dt);
     }
     this.particles = this.particles.filter((p) => p.age < p.life);
+    for (const t of this.texts) {
+      t.age += dt;
+      t.y -= 40 * dt;
+    }
+    this.texts = this.texts.filter((t) => t.age < t.life);
     if (this.shakeTime > 0) {
       this.shakeTime -= dt;
       if (this.shakeTime <= 0) this.shakeMag = 0;

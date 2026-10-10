@@ -8,8 +8,8 @@ import type { DebugHook } from '../src/debug.ts';
 
 type Snap = ReturnType<DebugHook['snapshot']>;
 
-const BASE = process.argv[2] ?? 'http://localhost:5180/';
-const OUT = join(tmpdir(), 'agent-scratch', 'magnet-drop');
+const BASE = process.argv[2] ?? 'http://localhost:5194/';
+const OUT = join(tmpdir(), 'agent-scratch', 'magnet-drop-powerups');
 mkdirSync(OUT, { recursive: true });
 
 const results: { name: string; ok: boolean; detail: string }[] = [];
@@ -128,6 +128,105 @@ try {
   const stallDeath = await waitFor(page, (x) => x.state === 'dying', 12000);
   check('stall-kills', hung !== null && stallDeath !== null, `stuck=${hung !== null} died=${stallDeath !== null} at y=${stallDeath?.y.toFixed(0)} camY=${stallDeath?.camY.toFixed(0)}`);
 
+  // P1. Natural spawning: the gap after the tutorial always holds a token, placed away from the walls.
+  await startRun(page, []);
+  s = (await waitFor(page, (x) => x.pickups.length > 0 || x.state !== 'playing', 4000)) ?? (await snap(page));
+  const firstToken = s.pickups[0];
+  // Tutorial patterns are 420, 480 and 440 tall with 120 px gaps, starting at y=240.
+  const tutorialGap = 240 + 420 + 120 + 480 + 120 + 440 + 60;
+  check(
+    'token-after-tutorial',
+    firstToken !== undefined && firstToken.y === tutorialGap && firstToken.x >= 50 && firstToken.x <= 310,
+    `first token ${firstToken?.kind} at (${firstToken?.x.toFixed(0)}, ${firstToken?.y.toFixed(0)}), gap centre ${tutorialGap}`,
+  );
+
+  // P2. Shield vs spikes: pattern 2 kills an idle orb on its shelf. With a shield it survives the hit once.
+  await startRun(page, [1]);
+  await page.evaluate(() => window.__md!.spawnPickup('shield', 0, 40));
+  const shielded = await waitFor(page, (x) => x.shield, 2000);
+  await sleep(250);
+  await shot(page, 'p2-shield-on');
+  const saved = await waitFor(page, (x) => x.saves > 0 || x.state !== 'playing', 6000);
+  await sleep(60);
+  await shot(page, 'p2-shield-saved');
+  await sleep(200);
+  const afterSave = await snap(page);
+  check(
+    'shield-blocks-spikes',
+    shielded !== null && saved !== null && saved.saves === 1 && saved.state === 'playing' && !saved.shield && afterSave.state === 'playing',
+    `collected=${shielded !== null} saves=${saved?.saves} state at hit=${saved?.state} 250 ms later=${afterSave.state} vy=${afterSave.vy.toFixed(0)}`,
+  );
+
+  // P3. Shield vs the screen: stall on the Rest magnet; the shield catches the first scroll-off, the second one kills.
+  await startRun(page, [9]);
+  await tap(page);
+  await waitFor(page, (x) => x.stuck, 4000);
+  await page.evaluate(() => window.__md!.spawnPickup('shield', 0, 0));
+  const shield2 = await waitFor(page, (x) => x.shield, 1000);
+  const camSave = await waitFor(page, (x) => x.saves > 0 || x.state !== 'playing', 15000);
+  const camSaveOk = camSave !== null && camSave.state === 'playing' && camSave.y > camSave.camY;
+  const finalDeath = await waitFor(page, (x) => x.state === 'dying', 15000);
+  check(
+    'shield-blocks-screen-once',
+    shield2 !== null && camSaveOk && finalDeath !== null && finalDeath.saves === 1,
+    `saved at y=${camSave?.y.toFixed(0)} camY=${camSave?.camY.toFixed(0)}, later died=${finalDeath !== null} saves=${finalDeath?.saves}`,
+  );
+
+  // P4. Phase: same deadly shelf, but the orb falls straight through the spikes and keeps going.
+  await startRun(page, [1]);
+  await page.evaluate(() => window.__md!.spawnPickup('phase', 0, 40));
+  const phased = await waitFor(page, (x) => x.phase > 0, 2000);
+  const inside = await waitFor(page, (x) => x.inSpikes || x.state !== 'playing', 5000);
+  await shot(page, 'p4-phase-in-spikes');
+  const past = await waitFor(page, (x) => x.state !== 'playing' || (x.patternTop !== null && x.y > x.patternTop + 420), 4000);
+  check(
+    'phase-passes-spikes',
+    phased !== null && inside !== null && inside.inSpikes && inside.state === 'playing' && past !== null && past.state === 'playing',
+    `inside spikes while playing=${inside?.inSpikes && inside.state === 'playing'} reached y=${past?.y.toFixed(0)} state=${past?.state}`,
+  );
+
+  // P5. Phase runs out after about 5 s and the orb is solid again.
+  await startRun(page, [0, 9]);
+  await page.evaluate(() => window.__md!.spawnPickup('phase', 0, 30));
+  await waitFor(page, (x) => x.phase > 0, 2000);
+  const t5 = Date.now();
+  await sleep(4300);
+  await shot(page, 'p5-phase-ending');
+  const ended = await waitFor(page, (x) => x.phase === 0, 3000);
+  const phaseSecs = (Date.now() - t5) / 1000;
+  check('phase-expires', ended !== null && phaseSecs > 4.4 && phaseSecs < 5.8, `phase lasted ${phaseSecs.toFixed(2)} s, state=${ended?.state}`);
+
+  // P6. Boost: a straight power dive that ignores magnets and smashes the shelf, then hands control back in a gap.
+  await startRun(page, [1]);
+  await page.evaluate(() => window.__md!.spawnPickup('boost', 0, 40));
+  const boosting = await waitFor(page, (x) => x.boosting, 2000);
+  await sleep(150);
+  const dive = await snap(page);
+  await shot(page, 'p6-boost-dive');
+  const smash = await waitFor(page, (x) => x.smashed > 0 || !x.boosting, 3000);
+  await sleep(40);
+  await shot(page, 'p6-boost-smash');
+  const released = await waitFor(page, (x) => !x.boosting || x.state !== 'playing', 4000);
+  check(
+    'boost-dives',
+    boosting !== null && dive.vy >= 700 && Math.abs(dive.vx) < 30,
+    `vy=${dive.vy.toFixed(0)} vx=${dive.vx.toFixed(1)} (the blue magnet would normally push the orb sideways)`,
+  );
+  check('boost-smashes-spikes', smash !== null && smash.smashed >= 1 && smash.state === 'playing', `smashed=${smash?.smashed} state=${smash?.state}`);
+  check(
+    'boost-releases-in-gap',
+    released !== null && released.state === 'playing' && released.inGap && Math.abs(released.vy - 300) < 30,
+    `released at y=${released?.y.toFixed(0)} inGap=${released?.inGap} vy=${released?.vy.toFixed(0)}`,
+  );
+
+  // P7. A token close to the orb drifts in and gets collected without a perfect line.
+  await startRun(page, [0, 9]);
+  await page.evaluate(() => window.__md!.spawnPickup('shield', 50, 30));
+  await sleep(120);
+  await shot(page, 'p7-token-drift');
+  const drifted = await waitFor(page, (x) => x.collected > 0, 2000);
+  check('token-drifts-in', drifted !== null && drifted.shield, `collected=${drifted?.collected} from 58 px away`);
+
   // 7. Screenshot every pattern.
   for (let i = 0; i < 10; i++) {
     await startRun(page, [i, 9]);
@@ -143,6 +242,10 @@ try {
   let maxMagnets = 0;
   let maxSpikes = 0;
   let maxScore = 0;
+  let maxPickups = 0;
+  let spawned = 0;
+  let collectedNaturally = 0;
+  let tokenShot = false;
   const end = Date.now() + 20000;
   while (Date.now() < end) {
     await tap(page);
@@ -150,12 +253,20 @@ try {
     maxMagnets = Math.max(maxMagnets, x.magnets);
     maxSpikes = Math.max(maxSpikes, x.spikes);
     maxScore = Math.max(maxScore, x.score);
+    maxPickups = Math.max(maxPickups, x.pickups.length);
+    spawned = Math.max(spawned, x.pickupsSpawned);
+    collectedNaturally = Math.max(collectedNaturally, x.collected);
+    if (!tokenShot && x.state === 'playing' && x.pickups.some((k) => k.y > x.camY + 40 && k.y < x.camY + 600)) {
+      tokenShot = true;
+      await shot(page, '08-token-in-play');
+    }
     await sleep(150 + Math.random() * 500);
   }
   const frames = await page.evaluate(() => window.__md!.frameWork());
   frames.sort((x, y) => x - y);
   const p95 = frames[Math.floor(frames.length * 0.95)] ?? 0;
-  check('bounded-objects', maxMagnets <= 16 && maxSpikes <= 16, `max magnets=${maxMagnets} spikes=${maxSpikes} best score=${maxScore}`);
+  check('bounded-objects', maxMagnets <= 16 && maxSpikes <= 16 && maxPickups <= 6, `max magnets=${maxMagnets} spikes=${maxSpikes} tokens=${maxPickups} best score=${maxScore}`);
+  check('tokens-spawn-in-play', spawned > 0, `tokens spawned in the last run=${spawned}, collected in the last run=${collectedNaturally}`);
   check('frame-work', frames.length > 100 && p95 < 8, `p95 update+render=${p95.toFixed(2)} ms over ${frames.length} frames (budget 8 ms)`);
   check('no-console-errors', errors.length === 0, errors.slice(0, 3).join(' | ') || 'none');
 } finally {

@@ -64,7 +64,44 @@ export const sfx = {
     noise(0.45, 0.3, 4000);
     tone('triangle', 300, 40, 0.4, 0.12);
   },
+  /** Rising whoosh: the dive kicks in. */
+  boost(): void {
+    tone('sawtooth', 120, 900, 0.35, 0.09);
+    noise(0.4, 0.14, 5000);
+    later(0.05, () => tone('square', 523, 1046, 0.12, 0.04));
+  },
+  /** Bright two-note chime. */
+  shield(): void {
+    tone('triangle', 784, 784, 0.12, 0.1);
+    later(0.08, () => tone('triangle', 1175, 1175, 0.22, 0.09));
+  },
+  /** Wobbly shimmer that drifts down and back up. */
+  phase(): void {
+    tone('sine', 900, 300, 0.18, 0.08);
+    later(0.15, () => tone('sine', 300, 1200, 0.25, 0.07));
+  },
+  /** Glassy crack when the shield breaks. */
+  save(): void {
+    noise(0.25, 0.22, 9000);
+    tone('triangle', 1400, 500, 0.2, 0.1);
+  },
+  smash(): void {
+    noise(0.12, 0.18, 6000);
+    tone('square', 260, 90, 0.08, 0.05);
+  },
+  /** Two quick ticks: a timed power-up is about to end. */
+  warn(): void {
+    tone('square', 1000, 1000, 0.04, 0.04);
+    later(0.18, () => tone('square', 1000, 1000, 0.04, 0.04));
+  },
+  expire(): void {
+    tone('sine', 600, 200, 0.18, 0.07);
+  },
 };
+
+function later(sec: number, fn: () => void): void {
+  setTimeout(fn, sec * 1000);
+}
 
 export function haptic(pattern: number | number[]): void {
   if ('vibrate' in navigator) navigator.vibrate(pattern);
