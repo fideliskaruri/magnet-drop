@@ -1,0 +1,22 @@
+{
+  "name": "magnet-drop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "One-touch vertical arcade prototype: flip polarity to slingshot a falling orb around hazards.",
+  "type": "module",
+  "packageManager": "pnpm@12.9.1",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc",
+    "sim": "node --experimental-strip-types --no-warnings scripts/sim.ts",
+    "verify": "node --experimental-strip-types --no-warnings scripts/verify.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "playwright-core": "1.65.0-alpha-2026-10-07",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.2"
+  }
+}
