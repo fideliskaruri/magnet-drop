@@ -20,6 +20,7 @@ Each experiment lives on its own branch and deploys to its own URL. Every push t
 | `endless` | Procedural, Flappy-style: score from obstacles passed | https://fideliskaruri.github.io/magnet-drop/endless/ |
 | `powerups` | Boosters, shields and phasers in the arena | https://fideliskaruri.github.io/magnet-drop/powerups/ |
 | `sound` | Reworked sound design | https://fideliskaruri.github.io/magnet-drop/sound/ |
+| `juice` | More intense visual effects | https://fideliskaruri.github.io/magnet-drop/juice/ |
 
 ## Run locally
 
