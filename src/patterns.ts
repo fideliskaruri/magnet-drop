@@ -1,7 +1,7 @@
 import type { Magnet, Pattern, Polarity, SpikeRow } from './types.ts';
 
-const pt = (x: number, y: number, polarity: Polarity, r = 18, field = 200): Magnet => ({ kind: 'point', x, y, r, field, polarity });
-const rail = (ax: number, ay: number, bx: number, by: number, polarity: Polarity, r = 6): Magnet => ({ kind: 'rail', ax, ay, bx, by, r, polarity });
+const pt = (x: number, y: number, polarity: Polarity, r = 18, field = 200): Magnet => ({ kind: 'point', x, y, r, field, reach: field, polarity });
+const rail = (ax: number, ay: number, bx: number, by: number, polarity: Polarity, r = 6): Magnet => ({ kind: 'rail', ax, ay, bx, by, r, reach: 0, polarity });
 const floor = (x0: number, x1: number, y: number, h = 18): SpikeRow => ({ x: x0, y, w: x1 - x0, h, dir: 'up' });
 
 // Pattern-local coordinates: x across the 360 px playfield, y down from the pattern top.
@@ -17,8 +17,8 @@ export const PATTERNS: Pattern[] = [
     name: 'Pull past',
     tier: 0,
     height: 480,
-    magnets: [pt(20, 120, 'red', 14, 150), pt(300, 190, 'blue', 20, 270)],
-    spikes: [floor(0, 190, 370)],
+    magnets: [pt(150, 180, 'blue', 22, 240)],
+    spikes: [floor(0, 150, 380)],
   },
   {
     name: 'Push past',
@@ -31,8 +31,8 @@ export const PATTERNS: Pattern[] = [
     name: 'Catch and fling',
     tier: 0,
     height: 500,
-    magnets: [pt(20, 90, 'blue', 14, 150), pt(150, 170, 'red', 24, 230)],
-    spikes: [floor(0, 240, 400)],
+    magnets: [pt(130, 170, 'red', 24, 260)],
+    spikes: [floor(0, 230, 400)],
   },
   {
     name: 'Ping-pong',
@@ -45,8 +45,8 @@ export const PATTERNS: Pattern[] = [
     name: 'Rail slide',
     tier: 1,
     height: 560,
-    magnets: [pt(160, 40, 'red', 16, 260), rail(16, 120, 16, 420, 'red')],
-    spikes: [floor(110, 360, 330)],
+    magnets: [pt(250, 80, 'red', 16, 290), rail(16, 240, 16, 440, 'red')],
+    spikes: [floor(110, 360, 340)],
   },
   {
     name: 'Rail launch',
@@ -59,15 +59,15 @@ export const PATTERNS: Pattern[] = [
     name: 'Corridor',
     tier: 2,
     height: 620,
-    magnets: [rail(110, 70, 110, 390, 'red'), rail(250, 70, 250, 390, 'blue')],
+    magnets: [rail(90, 70, 90, 390, 'red'), rail(270, 70, 270, 390, 'blue')],
     spikes: [floor(0, 100, 530), floor(260, 360, 530)],
   },
   {
     name: 'Slalom',
     tier: 1,
     height: 720,
-    magnets: [pt(40, 120, 'red', 18, 210), pt(320, 290, 'blue', 18, 210), pt(40, 450, 'red', 18, 210), pt(320, 610, 'blue', 18, 210)],
-    spikes: [floor(140, 220, 240, 16), floor(140, 220, 400, 16), floor(140, 220, 560, 16)],
+    magnets: [pt(60, 120, 'red', 18, 210), pt(320, 290, 'blue', 18, 210), pt(60, 450, 'red', 18, 210), pt(320, 610, 'blue', 18, 210)],
+    spikes: [floor(150, 210, 240, 16), floor(150, 210, 400, 16), floor(150, 210, 560, 16)],
   },
   {
     name: 'Rest',

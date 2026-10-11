@@ -5,7 +5,10 @@ export interface PointMagnet {
   x: number;
   y: number;
   r: number;
+  /** Designed reach, before the tuner scales it. */
   field: number;
+  /** Live reach after tuning and fitting (see zones.ts). */
+  reach: number;
   polarity: Polarity;
 }
 
@@ -16,6 +19,8 @@ export interface Rail {
   bx: number;
   by: number;
   r: number;
+  /** Live reach out from the rail surface after tuning and fitting (see zones.ts). */
+  reach: number;
   polarity: Polarity;
 }
 

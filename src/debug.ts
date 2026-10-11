@@ -1,3 +1,6 @@
+import { isPanelOpen } from './panel.ts';
+import { TUNE, type Tune } from './tune.ts';
+import { zoneClashes } from './zones.ts';
 import { audioStats, renderOffline, SOUND_NAMES, type AudioStats, type RenderResult, type SoundName } from './audio.ts';
 import type { Game } from './game.ts';
 import { World } from './world.ts';
@@ -49,6 +52,8 @@ export interface DebugHook {
     chain: number;
   };
   resetJuiceStats(): void;
+  /** Live tunables plus the fitted zones of every live magnet. */
+  tune(): { values: Tune; reaches: number[]; clashes: number; paused: boolean };
   audio(): AudioStats;
   /** Every sound and layer the engine can make, for offline rendering. */
   soundNames(): readonly SoundName[];
@@ -76,6 +81,9 @@ export function recordFrameWork(ms: number): void {
 /** Dev-only read access for browser tests. Not included in production builds. */
 export function installDebugHook(game: Game): void {
   window.__md = {
+    tune() {
+      return { values: { ...TUNE }, reaches: game.world.magnets.map((m) => m.reach), clashes: zoneClashes(game.world.magnets).length, paused: isPanelOpen() };
+    },
     snapshot() {
       const p = game.world.patternAt(game.orb.y);
       return {

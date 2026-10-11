@@ -40,9 +40,145 @@
         color: #7a86a8;
         cursor: pointer;
         touch-action: none;
+        z-index: 11;
       }
       #mute[aria-pressed='true'] {
         color: #ff4a2e;
+      }
+      #tune-toggle {
+        position: fixed;
+        top: calc(env(safe-area-inset-top, 0px) + 10px);
+        right: calc(env(safe-area-inset-right, 0px) + 62px);
+        width: 44px;
+        height: 44px;
+        display: grid;
+        place-items: center;
+        padding: 0;
+        border: 1px solid rgba(122, 134, 168, 0.35);
+        border-radius: 50%;
+        background: rgba(7, 11, 24, 0.6);
+        color: #7a86a8;
+        cursor: pointer;
+        touch-action: none;
+        z-index: 11;
+      }
+      #tune-toggle[aria-expanded='true'] {
+        color: #2ee6ff;
+        border-color: #2ee6ff;
+      }
+      #tune {
+        position: fixed;
+        z-index: 10;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        width: min(360px, 100vw);
+        box-sizing: border-box;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        touch-action: pan-y;
+        /* Start below the gear and mute buttons, which stay on top. */
+        padding: calc(env(safe-area-inset-top, 0px) + 66px) 18px calc(env(safe-area-inset-bottom, 0px) + 24px);
+        background: rgba(5, 8, 18, 0.94);
+        border-left: 1px solid rgba(46, 230, 255, 0.25);
+        color: #dfe6ff;
+        font: 14px/1.35 system-ui, sans-serif;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      #tune[hidden] {
+        display: none;
+      }
+      @media (max-width: 600px) {
+        #tune {
+          top: auto;
+          height: 58vh;
+          width: 100vw;
+          border-left: 0;
+          border-top: 1px solid rgba(46, 230, 255, 0.25);
+          border-radius: 16px 16px 0 0;
+          padding-top: 14px;
+        }
+      }
+      #tune h2 {
+        margin: 0;
+        font-size: 18px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #2ee6ff;
+      }
+      #tune h3 {
+        margin: 20px 0 6px;
+        font-size: 12px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: #7a86a8;
+      }
+      #tune p {
+        margin: 4px 0 0;
+        color: #7a86a8;
+        font-size: 12px;
+      }
+      .tune-head {
+        display: flex;
+        gap: 12px;
+        align-items: flex-start;
+        justify-content: space-between;
+      }
+      .tune-row {
+        display: block;
+        padding: 8px 10px;
+        margin: 0 -10px;
+        border-radius: 8px;
+      }
+      .tune-row.changed {
+        background: rgba(46, 230, 255, 0.08);
+      }
+      .tune-top {
+        display: flex;
+        justify-content: space-between;
+        font-weight: 600;
+      }
+      .tune-value {
+        font-variant-numeric: tabular-nums;
+        color: #2ee6ff;
+      }
+      .tune-row.changed .tune-value {
+        color: #ffd23f;
+      }
+      .tune-hint {
+        color: #7a86a8;
+        font-size: 12px;
+      }
+      #tune input[type='range'] {
+        width: 100%;
+        height: 28px;
+        margin: 2px 0;
+        accent-color: #2ee6ff;
+        touch-action: none;
+      }
+      #tune button {
+        min-height: 40px;
+        padding: 0 14px;
+        border: 1px solid rgba(46, 230, 255, 0.4);
+        border-radius: 10px;
+        background: rgba(46, 230, 255, 0.08);
+        color: #dfe6ff;
+        font: 600 14px system-ui, sans-serif;
+        cursor: pointer;
+      }
+      .tune-actions {
+        display: flex;
+        gap: 10px;
+        margin-top: 12px;
+      }
+      #tune .tune-note {
+        margin-top: 18px;
+      }
+      #tune .tune-status {
+        min-height: 18px;
+        color: #ffd23f;
+        word-break: break-all;
       }
     </style>
   </head>

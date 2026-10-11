@@ -4,25 +4,23 @@ import {
   AUTO_READY,
   BEST_KEY,
   CAMERA_ANCHOR,
-  CAMERA_MIN_SPEED,
   CAMERA_MIN_SPEED_DELAY,
   COLORS,
   DEATH_FREEZE,
   JUICE,
   ORB_RADIUS,
   RESTART_LOCK,
-  MAX_SPEED,
   SCORE_DIVISOR,
   SHIELD_GRACE,
   SHIELD_HITSTOP,
   SHIELD_HOP,
-  SHIELD_RECHARGE_PATTERNS,
   VIEW_H,
   VIEW_W,
 } from './config.ts';
 import { Fx, P_SPARK } from './fx.ts';
 import { attracts, closestPoint, fieldU, flip, hitsSpikes, step, touchingSpikes } from './physics.ts';
 import type { GameStateName, Orb, SpikeRow } from './types.ts';
+import { TUNE } from './tune.ts';
 import { World } from './world.ts';
 
 const NO_SPIKES: readonly SpikeRow[] = [];
@@ -248,7 +246,7 @@ export class Game {
     if (this.fx.streakTime > 0 && this.trailTick % 4 === 0) this.fx.ghost(o.x, o.y, this.color(), 0.22);
 
     let cam = Math.max(this.camY, o.y - VIEW_H * CAMERA_ANCHOR);
-    if (this.runTime > CAMERA_MIN_SPEED_DELAY) cam = Math.max(cam, this.camY + CAMERA_MIN_SPEED * dt);
+    if (this.runTime > CAMERA_MIN_SPEED_DELAY) cam = Math.max(cam, this.camY + TUNE.cameraSpeed * dt);
     this.camY = cam;
     if (o.y + ORB_RADIUS < this.camY) {
       this.die('stall', null);
@@ -259,7 +257,7 @@ export class Game {
     this.patternsPassed += passed;
     if (!this.shield && passed > 0) {
       this.sinceShield += passed;
-      if (this.sinceShield >= SHIELD_RECHARGE_PATTERNS) {
+      if (this.sinceShield >= TUNE.shieldRecharge) {
         this.shield = true;
         this.fx.popup('SHIELD READY', o.x, o.y - 34, COLORS.text, 16, 0.9);
         this.fx.pulse(o.x, o.y, COLORS.text, 60, 0.35, 3);
@@ -412,7 +410,7 @@ export class Game {
     m.repel = push;
     m.stuck = this.orb.stuck ? 1 : 0;
     m.stuckTime = this.stuckTime;
-    m.speed = Math.hypot(this.orb.vx, this.orb.vy) / MAX_SPEED;
+    m.speed = Math.min(1, Math.hypot(this.orb.vx, this.orb.vy) / TUNE.maxSpeed);
     m.danger = Math.max(0, Math.min(1, Math.max(spike, stall)));
     return m;
   }

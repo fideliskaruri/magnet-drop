@@ -1,9 +1,10 @@
-import { COLORS, JUICE, ORB_RADIUS, RAIL_FIELD, TRAIL_LENGTH, VIEW_H, VIEW_W } from './config.ts';
+import { COLORS, JUICE, ORB_RADIUS, TRAIL_LENGTH, VIEW_H, VIEW_W } from './config.ts';
 import { P_DOT, P_SHARD, P_SPARK } from './fx.ts';
 import type { Fx } from './fx.ts';
 import type { Game } from './game.ts';
 import { attracts, closestPoint, fieldU, spikeTriangles } from './physics.ts';
-import type { Magnet, Polarity, SpikeRow } from './types.ts';
+import { TUNE } from './tune.ts';
+import type { Magnet, Polarity, Rail, SpikeRow } from './types.ts';
 
 const TAU = Math.PI * 2;
 const colorOf = (p: Polarity): string => (p === 'red' ? COLORS.red : COLORS.blue);
@@ -83,7 +84,7 @@ function rgbOf(hex: string): [number, number, number] {
 const BG_COLD = rgbOf(COLORS.bg);
 const BG_HOT = rgbOf(COLORS.bgHot);
 const STREAKS = 26;
-const RAIL_HALO = [RAIL_FIELD * 2, RAIL_FIELD * 1.2, RAIL_FIELD * 0.6];
+const RAIL_HALO = [2, 1.2, 0.6];
 
 export class Renderer {
   private readonly canvas: HTMLCanvasElement;
@@ -284,21 +285,51 @@ export class Renderer {
     const c = colorOf(m.polarity);
     if (m.kind === 'point') {
       ctx.globalAlpha = 0.2 + 0.06 * fx.beat;
-      ctx.drawImage(this.glow.get(c)!, m.x - m.field, m.y - m.field, m.field * 2, m.field * 2);
+      ctx.drawImage(this.glow.get(c)!, m.x - m.reach, m.y - m.reach, m.reach * 2, m.reach * 2);
       ctx.globalAlpha = 1;
+      if (TUNE.showZones) {
+        ctx.strokeStyle = c;
+        ctx.globalAlpha = 0.5;
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 6]);
+        ctx.beginPath();
+        ctx.arc(m.x, m.y, m.reach, 0, TAU);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+      }
     } else {
       ctx.lineCap = 'round';
       ctx.strokeStyle = c;
       ctx.globalAlpha = 0.05;
+      const zone = m.r + m.reach;
       for (const w of RAIL_HALO) {
-        ctx.lineWidth = w;
+        ctx.lineWidth = zone * w;
         ctx.beginPath();
         ctx.moveTo(m.ax, m.ay);
         ctx.lineTo(m.bx, m.by);
         ctx.stroke();
       }
       ctx.globalAlpha = 1;
+      if (TUNE.showZones) this.railOutline(m, zone, c);
     }
+  }
+
+  /** Dashed capsule around a rail at the edge of its zone. */
+  private railOutline(m: Rail, zone: number, c: string): void {
+    const { ctx } = this;
+    const a = Math.atan2(m.by - m.ay, m.bx - m.ax);
+    ctx.strokeStyle = c;
+    ctx.globalAlpha = 0.5;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 6]);
+    ctx.beginPath();
+    ctx.arc(m.ax, m.ay, zone, a + Math.PI / 2, a + (3 * Math.PI) / 2);
+    ctx.arc(m.bx, m.by, zone, a - Math.PI / 2, a + Math.PI / 2);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
   }
 
   private magnet(m: Magnet, g: Game, ox: number, oy: number, time: number): void {
@@ -908,8 +939,9 @@ export class Renderer {
 }
 
 function magnetVisible(m: Magnet, top: number, bottom: number): boolean {
-  if (m.kind === 'point') return m.y + m.field > top && m.y - m.field < bottom;
-  return Math.max(m.ay, m.by) + RAIL_FIELD > top && Math.min(m.ay, m.by) - RAIL_FIELD < bottom;
+  if (m.kind === 'point') return m.y + m.reach > top && m.y - m.reach < bottom;
+  const z = m.r + m.reach;
+  return Math.max(m.ay, m.by) + z > top && Math.min(m.ay, m.by) - z < bottom;
 }
 
 function easeOut(t: number): number {

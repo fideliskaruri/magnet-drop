@@ -1,4 +1,5 @@
 import { AUDIO, MUTED_KEY } from './config.ts';
+import { TUNE } from './tune.ts';
 import type { Polarity } from './types.ts';
 
 // All sounds are synthesised, so there are no asset files to load.
@@ -218,8 +219,16 @@ export class SoundEngine {
   }
 
   setMuted(muted: boolean): void {
+    this.muted = muted;
     this.master.gain.cancelScheduledValues(this.ctx.currentTime);
-    this.master.gain.setTargetAtTime(muted ? 0 : AUDIO.masterGain, this.ctx.currentTime, 0.02);
+    this.master.gain.setTargetAtTime(muted ? 0 : AUDIO.masterGain * TUNE.volume, this.ctx.currentTime, 0.02);
+  }
+
+  private muted = false;
+
+  /** Re-read the tuner volume. */
+  applyVolume(): void {
+    this.setMuted(this.muted);
   }
 
   // ---------- one-shot voices ----------

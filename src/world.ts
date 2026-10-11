@@ -1,6 +1,7 @@
 import { BREATHER_AFTER_TIER, PATTERN_GAP, TIER_UNLOCK, VIEW_H } from './config.ts';
 import { PATTERNS, TUTORIAL_COUNT } from './patterns.ts';
 import type { Magnet, PlacedPattern, SpikeRow } from './types.ts';
+import { fitZones } from './zones.ts';
 
 const FIRST_TOP = 240;
 
@@ -65,17 +66,26 @@ export class World {
     const p = PATTERNS[index]!;
     const top = this.nextTop;
     this.bottoms.push(top + p.height);
+    const magnets = p.magnets.map((m) =>
+      m.kind === 'point' ? { ...m, y: m.y + top } : { ...m, ay: m.ay + top, by: m.by + top },
+    );
+    // Fit against the pattern above too, so zones never touch across the gap.
+    const above = this.placed[this.placed.length - 1]?.magnets ?? [];
+    fitZones(above, magnets);
     this.placed.push({
       index,
       tier: p.tier,
       top,
       height: p.height,
-      magnets: p.magnets.map((m) =>
-        m.kind === 'point' ? { ...m, y: m.y + top } : { ...m, ay: m.ay + top, by: m.by + top },
-      ),
+      magnets,
       spikes: p.spikes.map((s) => ({ ...s, y: s.y + top })),
     });
     this.nextTop = top + p.height + PATTERN_GAP;
+  }
+
+  /** Re-fit every live magnet after a zone setting changes. */
+  refit(): void {
+    fitZones([], this.magnets);
   }
 
   patternAt(y: number): PlacedPattern | undefined {

@@ -1,18 +1,5 @@
-import {
-  AIR_DAMPING_X,
-  GRAVITY,
-  LAUNCH_SPEED,
-  MAX_SPEED,
-  ORB_RADIUS,
-  POINT_STRENGTH,
-  RAIL_FIELD,
-  RAIL_STRENGTH,
-  REPEL_BOUNCE,
-  SPIKE_FORGIVENESS,
-  TERMINAL_FALL,
-  VIEW_W,
-  WALL_RESTITUTION,
-} from './config.ts';
+import { ORB_RADIUS, SPIKE_FORGIVENESS, VIEW_W } from './config.ts';
+import { TUNE } from './tune.ts';
 import type { Magnet, Orb, Polarity, SpikeRow } from './types.ts';
 
 export type StepEvent = 'none' | 'stick' | 'bounce' | 'wall' | 'dead';
@@ -33,7 +20,7 @@ export function closestPoint(m: Magnet, x: number, y: number): { cx: number; cy:
 
 /** 0..1 field intensity at distance d from the core, before squaring. */
 export function fieldU(m: Magnet, d: number): number {
-  const u = m.kind === 'point' ? 1 - d / m.field : 1 - (d - m.r) / RAIL_FIELD;
+  const u = m.kind === 'point' ? 1 - d / m.reach : 1 - (d - m.r) / m.reach;
   return Math.max(0, Math.min(1, u));
 }
 
@@ -43,8 +30,8 @@ export function flip(orb: Orb): boolean {
   if (!s || attracts(orb.polarity, s.magnet.polarity)) return false;
   // Keep the tangential slide, replace the normal part with the launch.
   const vt = orb.vx * -s.ny + orb.vy * s.nx;
-  orb.vx = -s.ny * vt + s.nx * LAUNCH_SPEED;
-  orb.vy = s.nx * vt + s.ny * LAUNCH_SPEED;
+  orb.vx = -s.ny * vt + s.nx * TUNE.launchSpeed;
+  orb.vy = s.nx * vt + s.ny * TUNE.launchSpeed;
   orb.stuck = null;
   return true;
 }
@@ -58,7 +45,7 @@ export function step(orb: Orb, magnets: readonly Magnet[], spikes: readonly Spik
     stepStuck(orb, dt);
   } else {
     let ax = 0;
-    let ay = GRAVITY;
+    let ay = TUNE.gravity;
     for (const m of magnets) {
       const { cx, cy } = closestPoint(m, orb.x, orb.y);
       const dx = cx - orb.x;
@@ -67,19 +54,19 @@ export function step(orb: Orb, magnets: readonly Magnet[], spikes: readonly Spik
       if (d < 1e-6) continue;
       const u = fieldU(m, d);
       if (u <= 0) continue;
-      const k = (m.kind === 'point' ? POINT_STRENGTH : RAIL_STRENGTH) * u;
-      const s = attracts(orb.polarity, m.polarity) ? 1 : -1;
+      const k = (m.kind === 'point' ? TUNE.pointStrength : TUNE.railStrength) * u;
+      const s = attracts(orb.polarity, m.polarity) ? 1 : -TUNE.repelScale;
       ax += (s * k * dx) / d;
       ay += (s * k * dy) / d;
     }
     orb.vx += ax * dt;
     orb.vy += ay * dt;
-    orb.vx *= Math.exp(-AIR_DAMPING_X * dt);
-    if (orb.vy > TERMINAL_FALL) orb.vy -= (orb.vy - TERMINAL_FALL) * Math.min(1, 3 * dt);
+    orb.vx *= Math.exp(-TUNE.airDamping * dt);
+    if (orb.vy > TUNE.terminalFall) orb.vy -= (orb.vy - TUNE.terminalFall) * Math.min(1, 3 * dt);
     const sp = Math.hypot(orb.vx, orb.vy);
-    if (sp > MAX_SPEED) {
-      orb.vx *= MAX_SPEED / sp;
-      orb.vy *= MAX_SPEED / sp;
+    if (sp > TUNE.maxSpeed) {
+      orb.vx *= TUNE.maxSpeed / sp;
+      orb.vy *= TUNE.maxSpeed / sp;
     }
     orb.x += orb.vx * dt;
     orb.y += orb.vy * dt;
@@ -109,8 +96,8 @@ export function step(orb: Orb, magnets: readonly Magnet[], spikes: readonly Spik
         break;
       }
       if (vn < 0) {
-        orb.vx -= (1 + REPEL_BOUNCE) * vn * nx;
-        orb.vy -= (1 + REPEL_BOUNCE) * vn * ny;
+        orb.vx -= (1 + TUNE.repelBounce) * vn * nx;
+        orb.vy -= (1 + TUNE.repelBounce) * vn * ny;
         event = 'bounce';
       }
     }
@@ -119,13 +106,13 @@ export function step(orb: Orb, magnets: readonly Magnet[], spikes: readonly Spik
   if (orb.x < ORB_RADIUS) {
     orb.x = ORB_RADIUS;
     if (orb.vx < 0) {
-      orb.vx = -orb.vx * WALL_RESTITUTION;
+      orb.vx = -orb.vx * TUNE.wallBounce;
       if (event === 'none') event = 'wall';
     }
   } else if (orb.x > VIEW_W - ORB_RADIUS) {
     orb.x = VIEW_W - ORB_RADIUS;
     if (orb.vx > 0) {
-      orb.vx = -orb.vx * WALL_RESTITUTION;
+      orb.vx = -orb.vx * TUNE.wallBounce;
       if (event === 'none') event = 'wall';
     }
   }
@@ -147,7 +134,7 @@ function stepStuck(orb: Orb, dt: number): void {
   const m = s.magnet;
   // Perched exactly on top is a perfect balance that never resolves; tip it over.
   if (s.ny < -0.999) orb.vx += (orb.x >= closestPoint(m, orb.x, orb.y).cx ? 30 : -30) * dt;
-  orb.vy += GRAVITY * dt;
+  orb.vy += TUNE.gravity * dt;
   let vn = orb.vx * s.nx + orb.vy * s.ny;
   if (vn < 0) vn = 0;
   orb.vx -= vn * s.nx;

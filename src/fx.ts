@@ -1,4 +1,5 @@
 import { COLORS, JUICE, TRAIL_LENGTH } from './config.ts';
+import { TUNE } from './tune.ts';
 
 export const P_DOT = 0;
 export const P_SPARK = 1;
@@ -187,8 +188,8 @@ export class Fx {
 
   kick(dx: number, dy: number, px: number): void {
     if (this.reduced) return;
-    this.kickX += dx * px;
-    this.kickY += dy * px;
+    this.kickX += dx * px * TUNE.juice;
+    this.kickY += dy * px * TUNE.juice;
   }
 
   pulse(x: number, y: number, color: string, r1: number, life: number, width: number, r0 = 11, delay = 0): void {
@@ -450,19 +451,19 @@ export class Fx {
     this.beat = this.reduced ? 0 : Math.exp(-7 * this.beatPhase);
 
     // Trauma shake: amplitude is trauma squared, driven by smooth noise.
-    const m = this.reduced ? JUICE.reducedShake : 1;
+    const m = (this.reduced ? JUICE.reducedShake : 1) * TUNE.juice;
     const s = this.trauma * this.trauma * m;
     this.camX = JUICE.maxShake * s * noise(this.clock, 1.3) + this.kickX;
     this.camY = JUICE.maxShake * s * noise(this.clock, 7.9) + this.kickY;
     this.camAngle = this.reduced ? 0 : JUICE.maxShakeAngle * s * noise(this.clock, 4.4);
-    this.camZoom = 1 + this.zoomPunch + this.zoomHold;
+    this.camZoom = 1 + (this.zoomPunch + this.zoomHold) * TUNE.juice;
     this.maxShakePx = Math.max(this.maxShakePx, Math.hypot(this.camX, this.camY));
     this.maxZoomDev = Math.max(this.maxZoomDev, Math.abs(this.camZoom - 1));
   }
 
   /** Overlay alpha for the current flash, already scaled for reduced motion. */
   flashAlpha(): number {
-    const a = Math.min(1, this.flash) * JUICE.flashMaxAlpha * (this.reduced ? JUICE.reducedFlash : 1);
+    const a = Math.min(1, Math.min(1, this.flash) * JUICE.flashMaxAlpha * TUNE.juice * (this.reduced ? JUICE.reducedFlash : 1));
     if (a > this.maxFlashAlpha) this.maxFlashAlpha = a;
     return a;
   }

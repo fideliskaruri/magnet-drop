@@ -1,8 +1,12 @@
-import { isMuted, setHidden, setMuted, sound, unlockAudio } from './audio.ts';
+import { isMuted, setHidden, setMuted, SILENT_MIX, sound, unlockAudio } from './audio.ts';
 import { DT, MAX_FRAME_DT } from './config.ts';
 import { debugState, installDebugHook, recordFrameWork } from './debug.ts';
 import { Game } from './game.ts';
+import { closePanel, installPanel, isPanelOpen } from './panel.ts';
 import { Renderer } from './render.ts';
+import { loadTune } from './tune.ts';
+
+loadTune();
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game');
 if (!canvas) throw new Error('Missing #game canvas.');
@@ -16,7 +20,9 @@ window.addEventListener(
   'pointerdown',
   (e) => {
     e.preventDefault();
-    game.tap();
+    // A press on the game while tuning just closes the panel.
+    if (isPanelOpen()) closePanel();
+    else game.tap();
   },
   { passive: false },
 );
@@ -62,6 +68,8 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyM' && !e.repeat) toggleMute();
 });
 
+installPanel(game);
+
 if (import.meta.env.DEV) installDebugHook(game);
 
 let last = performance.now();
@@ -71,12 +79,14 @@ function frame(now: number): void {
   const workStart = performance.now();
   acc += Math.min((now - last) / 1000, MAX_FRAME_DT) * (import.meta.env.DEV ? debugState.timeScale : 1);
   last = now;
+  // The tuning panel pauses the game; the screen keeps drawing so zone changes show live.
+  if (isPanelOpen()) acc = 0;
   while (acc >= DT) {
     game.update(DT);
     acc -= DT;
   }
   renderer.render(game, acc / DT, now / 1000);
-  sound()?.setMix(game.mix());
+  sound()?.setMix(isPanelOpen() ? SILENT_MIX : game.mix());
   if (import.meta.env.DEV) recordFrameWork(performance.now() - workStart);
   requestAnimationFrame(frame);
 }

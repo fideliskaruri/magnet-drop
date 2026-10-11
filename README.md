@@ -55,7 +55,9 @@ pnpm sim [n]      # proves every pattern (or only pattern n) can be cleared from
 pnpm verify [url] # headless Edge end-to-end checks against a running dev server; screenshots go to %TEMP%\agent-scratch\magnet-drop-tuner
 ```
 
-All feel and tuning numbers are in `src/config.ts` (effect tunables are in `JUICE`). The patterns are in `src/patterns.ts`.
+Speeds, forces, zone sizes and bounces are in `src/tune.ts` and can be changed live from the in-game tuning panel (gear button or T). See [docs/tuner.md](docs/tuner.md) for the defaults, the sliders and how zones are kept apart. Other constants are in `src/config.ts` (effect tunables are in `JUICE`). The patterns are in `src/patterns.ts`.
+
+`pnpm sim` also takes `key=value` overrides, e.g. `pnpm sim gravity=700 fieldScale=1`.
 
 ## Layout
 
@@ -64,6 +66,9 @@ All feel and tuning numbers are in `src/config.ts` (effect tunables are in `JUIC
 | `src/physics.ts` | Pure physics: magnet forces, sticking, launching, walls and spikes. Shared by the game and `sim`. |
 | `src/patterns.ts` | The 10 hand-authored obstacle patterns (the first 3 are the tutorial). |
 | `src/world.ts` | Spawns and culls patterns ahead of the camera. |
+| `src/tune.ts` | Live tunables, their defaults, slider ranges and saved settings. |
+| `src/zones.ts` | Fits magnet zones so no two come closer than the set gap. |
+| `src/panel.ts` | The tuning panel: sliders, reset, copy values. Pauses the game while open. |
 | `src/audio.ts` | Synthesised sound: continuous layers driven every frame plus capped one-shot voices, a mute switch and offline renders for `verify`. |
 | `src/game.ts` | State machine, camera, stall pressure, scoring and best score. |
 | `src/fx.ts` | Effects: shake, camera kicks and zoom, flashes (at most 3 big ones per second), particles, pulses and run intensity. Tones down under reduced motion. |

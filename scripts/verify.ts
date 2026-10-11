@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { chromium, type Page } from 'playwright-core';
 import { AUDIO } from '../src/config.ts';
 import type { DebugHook } from '../src/debug.ts';
+import { DEFAULTS } from '../src/tune.ts';
 
 type Snap = ReturnType<DebugHook['snapshot']>;
 
@@ -152,8 +153,8 @@ try {
   check('stuck-sound', stuckMix.stuck === 1 && stuckMix.attract === 0, `stuck layer=${stuckMix.stuck} hum=${stuckMix.attract}`);
   check('stick-and-launch', stuck !== null && afterLaunch.launches === 1 && !afterLaunch.stuck && speed >= 550, `stuck=${stuck !== null} launches=${afterLaunch.launches} speed=${speed.toFixed(0)}`);
 
-  // 5a. The shield: same fall onto pattern 2's shelf, but the shield absorbs the hit and the run goes on.
-  await startRun(page, [1, 9, 9, 9, 9, 9, 9, 9]);
+  // 5a. The shield: an idle fall onto Rail slide's shelf, but the shield absorbs the hit and the run goes on.
+  await startRun(page, [5, 9, 9, 9, 9, 9, 9, 9]);
   s = await snap(page);
   const shieldAtStart = s.shield;
   const saved = await waitFor(page, (x) => x.shieldsUsed === 1, 5000);
@@ -181,9 +182,9 @@ try {
   await shot(page, '05b-shield-ready');
   check('shield-recharges', back5 !== null && back5.state === 'playing' && back5.shield, `state=${back5?.state} shield=${back5?.shield} patterns passed=${back5?.patternsPassed}`);
 
-  // 5c. Death and fast restart on pattern 2 without flipping and without a shield.
+  // 5c. Death and fast restart on Rail slide without flipping and without a shield.
   await page.evaluate(() => localStorage.clear());
-  await startRun(page, [1], 1, false);
+  await startRun(page, [5], 1, false);
   const dead = await waitFor(page, (x) => x.state === 'dying', 5000);
   const deathScore = dead?.score ?? 0;
   await sleep(200);
@@ -268,7 +269,8 @@ try {
   check('live-output', maxOut > 0.02 && maxOut < 1, `live output peak ${dbfs(maxOut)} while playing (audible, under full scale)`);
   check('bounded-voices', maxVoices <= AUDIO.maxVoices + 1 && mash.peakVoices <= AUDIO.maxVoices + 1, `max concurrent voices sampled=${maxVoices}, engine peak=${mash.peakVoices}, cap=${AUDIO.maxVoices} (+1 for death), dropped=${mash.dropped}`);
   // Let it fall back to the ready screen; the per-frame mix updates must not create nodes, and every voice must free up.
-  await waitFor(page, (x) => x.state === 'ready', 6000);
+  // The slower tuner physics can keep an idle orb alive a while; the stall still ends it.
+  await waitFor(page, (x) => x.state === 'ready', 30000);
   await sleep(1500);
   const idle0 = await audio(page);
   await sleep(1500);
@@ -288,7 +290,7 @@ try {
   await tap(page);
   for (let i = 0; i < 8; i++) await shot(page, `09-launch-burst-${i}`);
   await page.evaluate(() => window.__md!.setTimeScale(1));
-  await startRun(page, [1]);
+  await startRun(page, [5], 1, false);
   await waitFor(page, (x) => x.patternTop !== null && x.y > x.patternTop - 40, 4000);
   await page.evaluate(() => window.__md!.setTimeScale(0.08));
   await waitFor(page, (x) => x.state === 'dying', 30000);
@@ -345,6 +347,88 @@ try {
   for (let i = 0; i < ft.length; i++) worstWindow = Math.max(worstWindow, ft.filter((t) => t >= ft[i]! && t < ft[i]! + 1).length);
   check('flash-limit', ft.length > 5 && worstWindow <= 3, `${ft.length} big flashes in 8 s of nonstop requests, worst 1 s window=${worstWindow} (limit 3)`);
 
+  // 13. Tuning panel: pauses, sliders apply live, zones never touch, values persist, reset works.
+  const tuneState = (): Promise<ReturnType<DebugHook['tune']>> => page.evaluate(() => window.__md!.tune());
+  const slide = (key: string, v: number): Promise<void> =>
+    page.evaluate(([k, val]) => {
+      const el = document.querySelector<HTMLInputElement>(`#tune input[name="${k}"]`)!;
+      el.value = String(val);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    }, [key, v] as const);
+  await startRun(page, [8, 4], 1);
+  await sleep(400);
+  await page.keyboard.press('KeyT');
+  const q0 = await snap(page);
+  await sleep(600);
+  const q1 = await snap(page);
+  const u0 = await tuneState();
+  check(
+    'panel-pauses',
+    u0.paused && (await page.locator('#tune').isVisible()) && q0.y === q1.y && q0.camY === q1.camY,
+    `open=${u0.paused} orb y ${q0.y.toFixed(1)} -> ${q1.y.toFixed(1)} over 600 ms`,
+  );
+  // Press the panel itself (its heading), not a slider, which would rightly move.
+  const head = (await page.locator('#tune h2').boundingBox())!;
+  await page.touchscreen.tap(head.x + head.width / 2, head.y + head.height / 2);
+  await sleep(100);
+  const q2 = await snap(page);
+  check('panel-press-no-flip', q2.polarity === q1.polarity && (await tuneState()).paused, `polarity ${q1.polarity} -> ${q2.polarity}, panel still open`);
+  check('defaults-no-clash', u0.clashes === 0 && JSON.stringify(u0.values) === JSON.stringify(DEFAULTS), `clashes=${u0.clashes}, reaches ${u0.reaches.map((r) => r.toFixed(0)).join('/')}`);
+  await slide('fieldScale', 1.3);
+  await slide('zoneGap', 40);
+  const big = await tuneState();
+  await slide('fieldScale', 0.5);
+  await slide('showZones', 1);
+  await slide('gravity', 900);
+  const u1 = await tuneState();
+  check(
+    'slider-applies',
+    u1.values.fieldScale === 0.5 && u1.values.gravity === 900 && u1.values.showZones === 1 && u1.reaches.some((r, i) => r < u0.reaches[i]! - 1),
+    `fieldScale=${u1.values.fieldScale} gravity=${u1.values.gravity}; reaches ${u0.reaches.map((r) => r.toFixed(0)).join('/')} -> ${u1.reaches.map((r) => r.toFixed(0)).join('/')}`,
+  );
+  check('zone-refit-no-clash', big.clashes === 0 && u1.clashes === 0, `field x1.3 gap 40: clashes=${big.clashes} reaches ${big.reaches.map((r) => r.toFixed(0)).join('/')}; field x0.5: clashes=${u1.clashes}`);
+  const changedRows = await page.locator('#tune .tune-row.changed').evaluateAll((els) => els.map((el) => (el as HTMLElement).dataset.key).sort().join(','));
+  check('changed-rows-marked', changedRows === 'fieldScale,gravity,showZones,zoneGap', `rows marked changed: ${changedRows}`);
+  await shot(page, '13-panel-phone');
+  await page.locator('#tune').evaluate((el) => (el.scrollTop = el.scrollHeight));
+  await page.getByRole('button', { name: 'Copy values' }).click();
+  await sleep(150);
+  const statusText = (await page.locator('#tune .tune-status').textContent()) ?? '';
+  await shot(page, '13b-panel-phone-bottom');
+  check('copy-values', statusText.length > 0, statusText);
+  await page.keyboard.press('Escape');
+  await sleep(300);
+  const q3 = await snap(page);
+  check('panel-closes-and-resumes', !(await tuneState()).paused && !(await page.locator('#tune').isVisible()) && q3.y !== q1.y, `orb moving again: y ${q1.y.toFixed(1)} -> ${q3.y.toFixed(1)}`);
+  await shot(page, '13c-zones-shown');
+  await page.reload();
+  await page.waitForFunction(() => window.__md !== undefined);
+  const u2 = await tuneState();
+  check('tune-persists', u2.values.fieldScale === 0.5 && u2.values.gravity === 900 && u2.values.zoneGap === 40, `after reload fieldScale=${u2.values.fieldScale} gravity=${u2.values.gravity} zoneGap=${u2.values.zoneGap}`);
+  await page.locator('#tune-toggle').tap();
+  await sleep(100);
+  await page.locator('#tune').evaluate((el) => (el.scrollTop = el.scrollHeight));
+  await page.getByRole('button', { name: 'Reset to defaults' }).click();
+  const u3 = await tuneState();
+  const stored = await page.evaluate(() => localStorage.getItem('magnetdrop.tuner.settings'));
+  check(
+    'tune-reset',
+    JSON.stringify(u3.values) === JSON.stringify(DEFAULTS) && (await page.locator('#tune .tune-row.changed').count()) === 0,
+    `values back to defaults, stored=${stored}`,
+  );
+  const r0 = await snap(page);
+  await page.touchscreen.tap(195, 120);
+  await sleep(100);
+  const r1 = await snap(page);
+  check('game-press-closes-panel', !(await tuneState()).paused && r1.state === r0.state && r1.polarity === r0.polarity, `panel closed, state ${r0.state} -> ${r1.state}, polarity unchanged`);
+  const wide = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  await wide.goto(BASE);
+  await wide.waitForFunction(() => window.__md !== undefined);
+  await wide.keyboard.press('KeyT');
+  await sleep(200);
+  await shot(wide, '13d-panel-desktop');
+  await wide.close();
+
   check('no-console-errors', errors.length === 0, errors.slice(0, 3).join(' | ') || 'none');
 
   // 12. Reduced motion: same launch and death, shake and flash must drop.
@@ -353,8 +437,8 @@ try {
     let flash = 0;
     let zoom = 0;
     let reduced = false;
-    for (const run of [[3], [1]]) {
-      await startRun(p, run);
+    for (const run of [[3], [5]]) {
+      await startRun(p, run, 1, false);
       await p.evaluate(() => window.__md!.resetJuiceStats());
       if (run[0] === 3) {
         await waitFor(p, (x) => x.stuck, 4000);
