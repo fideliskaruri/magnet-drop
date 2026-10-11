@@ -1,3 +1,4 @@
+import { audioStats, renderOffline, SOUND_NAMES, type AudioStats, type RenderResult, type SoundName } from './audio.ts';
 import type { Game } from './game.ts';
 
 export interface DebugHook {
@@ -41,6 +42,13 @@ export interface DebugHook {
     chain: number;
   };
   resetJuiceStats(): void;
+  audio(): AudioStats;
+  /** Every sound and layer the engine can make, for offline rendering. */
+  soundNames(): readonly SoundName[];
+  /** Render one sound through the full output chain in an OfflineAudioContext. */
+  renderSound(name: SoundName): Promise<RenderResult>;
+  /** The levels the continuous layers are following right now. */
+  mix(): { attract: number; repel: number; stuck: number; speed: number; danger: number };
 }
 
 declare global {
@@ -116,6 +124,13 @@ export function installDebugHook(game: Game): void {
     },
     resetJuiceStats() {
       game.fx.resetStats();
+    },
+    audio: audioStats,
+    soundNames: () => SOUND_NAMES,
+    renderSound: (name) => renderOffline(name),
+    mix() {
+      const m = game.mix();
+      return { attract: m.attract, repel: m.repel, stuck: m.stuck, speed: m.speed, danger: m.danger };
     },
   };
 }
