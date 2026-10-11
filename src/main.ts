@@ -1,5 +1,5 @@
 import { DT, MAX_FRAME_DT } from './config.ts';
-import { installDebugHook, recordFrameWork } from './debug.ts';
+import { debugState, installDebugHook, recordFrameWork } from './debug.ts';
 import { Game } from './game.ts';
 import { Renderer } from './render.ts';
 
@@ -35,7 +35,7 @@ let acc = 0;
 
 function frame(now: number): void {
   const workStart = performance.now();
-  acc += Math.min((now - last) / 1000, MAX_FRAME_DT);
+  acc += Math.min((now - last) / 1000, MAX_FRAME_DT) * (import.meta.env.DEV ? debugState.timeScale : 1);
   last = now;
   while (acc >= DT) {
     game.update(DT);

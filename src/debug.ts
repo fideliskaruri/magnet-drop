@@ -22,6 +22,25 @@ export interface DebugHook {
   setup(seed: number, forcedPatterns?: number[]): void;
   /** Milliseconds of update + render work per frame, oldest first (last 600 frames). */
   frameWork(): number[];
+  resetFrameWork(): void;
+  /** Slow motion for frame-by-frame screenshots (dev only). */
+  setTimeScale(s: number): void;
+  /** Force a minimum intensity, as if deep in a run. */
+  setHeatFloor(h: number): void;
+  /** Fire every effect repeatedly to stress the frame budget. */
+  setStress(on: boolean): void;
+  juice(): {
+    heat: number;
+    reduced: boolean;
+    maxShakePx: number;
+    maxFlashAlpha: number;
+    maxZoomDev: number;
+    flashTimes: number[];
+    particles: number;
+    nearMisses: number;
+    chain: number;
+  };
+  resetJuiceStats(): void;
 }
 
 declare global {
@@ -31,6 +50,8 @@ declare global {
 }
 
 const work: number[] = [];
+
+export const debugState = { timeScale: 1 };
 
 export function recordFrameWork(ms: number): void {
   work.push(ms);
@@ -66,6 +87,35 @@ export function installDebugHook(game: Game): void {
     },
     frameWork() {
       return [...work];
+    },
+    resetFrameWork() {
+      work.length = 0;
+    },
+    setTimeScale(s) {
+      debugState.timeScale = s;
+    },
+    setHeatFloor(h) {
+      game.heatFloor = h;
+    },
+    setStress(on) {
+      game.stress = on;
+    },
+    juice() {
+      const fx = game.fx;
+      return {
+        heat: game.heat,
+        reduced: fx.reduced,
+        maxShakePx: fx.maxShakePx,
+        maxFlashAlpha: fx.maxFlashAlpha,
+        maxZoomDev: fx.maxZoomDev,
+        flashTimes: [...fx.flashTimes],
+        particles: fx.particleCount,
+        nearMisses: game.nearMisses,
+        chain: game.chain,
+      };
+    },
+    resetJuiceStats() {
+      game.fx.resetStats();
     },
   };
 }

@@ -32,9 +32,41 @@ export const DEATH_FREEZE = 0.06;
 export const RESTART_LOCK = 0.6;
 export const AUTO_READY = 1.5;
 
-export const TRAIL_LENGTH = 20;
+export const TRAIL_LENGTH = 26;
 export const SCORE_DIVISOR = 10;
-export const BEST_KEY = 'magnetdrop.best';
+export const BEST_KEY = 'magnetdrop.juice.best';
+
+// Visual feedback only. None of these touch physics.
+export const JUICE = {
+  launchHitstop: 0.035,
+  stickHitstop: 0.018,
+  /** Sticks slower than this don't freeze. */
+  stickHitstopSpeed: 220,
+  /** Shake in px and radians at trauma 1 (amplitude is trauma squared). */
+  maxShake: 16,
+  maxShakeAngle: 0.03,
+  traumaDecay: 1.5,
+  /** Shake multiplier under prefers-reduced-motion. */
+  reducedShake: 0.2,
+  reducedFlash: 0.25,
+  /** Big full-screen flashes are at least this far apart (no more than 3 per second). */
+  flashMinGap: 0.34,
+  flashMaxAlpha: 0.35,
+  nearMissMargin: 10,
+  nearMissCooldown: 0.5,
+  milestoneEvery: 100,
+  bigMilestoneEvery: 500,
+  chainWindow: 2.2,
+  /** Score at which depth heat maxes out. */
+  heatDepth: 1500,
+  bpmMin: 96,
+  bpmMax: 160,
+  particleCap: 420,
+  pulseCap: 48,
+  popupCap: 12,
+  ghostCap: 10,
+  dangerZone: 130,
+} as const;
 
 export const COLORS = {
   bg: '#070b18',
@@ -47,4 +79,7 @@ export const COLORS = {
   text: '#e8eefc',
   dim: '#7a86a8',
   chrome: '#2a3040',
+  /** Background at max heat. */
+  bgHot: '#170826',
+  white: '#ffffff',
 } as const;
