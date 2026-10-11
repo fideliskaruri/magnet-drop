@@ -22,6 +22,7 @@ Each experiment lives on its own branch and deploys to its own URL. Every push t
 | `sound` | Reworked sound design | https://fideliskaruri.github.io/magnet-drop/sound/ |
 | `juice` | More intense visual effects | https://fideliskaruri.github.io/magnet-drop/juice/ |
 | `tuner` | Easy + sound + juice combined, with live tuning sliders | https://fideliskaruri.github.io/magnet-drop/tuner/ |
+| `endless-tuner` | Tuner combined with endless procedural gates | https://fideliskaruri.github.io/magnet-drop/endless-tuner/ |
 
 ## Run locally
 
