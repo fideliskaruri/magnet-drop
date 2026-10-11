@@ -8,8 +8,8 @@ import type { DebugHook } from '../src/debug.ts';
 
 type Snap = ReturnType<DebugHook['snapshot']>;
 
-const BASE = process.argv[2] ?? 'http://localhost:5180/';
-const OUT = join(tmpdir(), 'agent-scratch', 'magnet-drop');
+const BASE = process.argv[2] ?? 'http://localhost:5196/';
+const OUT = join(tmpdir(), 'agent-scratch', 'magnet-drop-juice');
 mkdirSync(OUT, { recursive: true });
 
 const results: { name: string; ok: boolean; detail: string }[] = [];
@@ -157,7 +157,111 @@ try {
   const p95 = frames[Math.floor(frames.length * 0.95)] ?? 0;
   check('bounded-objects', maxMagnets <= 16 && maxSpikes <= 16, `max magnets=${maxMagnets} spikes=${maxSpikes} best score=${maxScore}`);
   check('frame-work', frames.length > 100 && p95 < 8, `p95 update+render=${p95.toFixed(2)} ms over ${frames.length} frames (budget 8 ms)`);
+
+  // 9. Juice: consecutive frames around a launch and a death, in slow motion.
+  await startRun(page, [3]);
+  await waitFor(page, (x) => x.stuck, 4000);
+  await sleep(120);
+  await page.evaluate(() => window.__md!.setTimeScale(0.08));
+  await tap(page);
+  for (let i = 0; i < 8; i++) await shot(page, `09-launch-burst-${i}`);
+  await page.evaluate(() => window.__md!.setTimeScale(1));
+  await startRun(page, [1]);
+  await waitFor(page, (x) => x.patternTop !== null && x.y > x.patternTop - 40, 4000);
+  await page.evaluate(() => window.__md!.setTimeScale(0.08));
+  await waitFor(page, (x) => x.state === 'dying', 30000);
+  for (let i = 0; i < 10; i++) await shot(page, `09-death-burst-${i}`);
+  await page.evaluate(() => window.__md!.setTimeScale(1));
+  check('burst-frames', true, 'launch and death bursts saved');
+
+  // 10. Deep run look: heat forced to max, mashing taps.
+  await page.reload();
+  await page.waitForFunction(() => window.__md !== undefined);
+  await page.evaluate(() => window.__md!.setHeatFloor(1));
+  await tap(page);
+  let maxHeat = 0;
+  for (let i = 0; i < 6; i++) {
+    await sleep(350 + Math.random() * 300);
+    await tap(page);
+    await sleep(60);
+    await shot(page, `10-hot-${i}`);
+    maxHeat = Math.max(maxHeat, (await page.evaluate(() => window.__md!.juice())).heat);
+  }
+  check('heat-rises', maxHeat > 0.8, `max heat=${maxHeat.toFixed(2)} with the deep-run floor forced on`);
+
+  // 11. Every effect firing at once: frame budget and the flash limiter.
+  await page.reload();
+  await page.waitForFunction(() => window.__md !== undefined);
+  await page.evaluate(() => window.__md!.setup(1, [9]));
+  await tap(page);
+  await page.evaluate(() => {
+    window.__md!.setHeatFloor(1);
+    window.__md!.setStress(true);
+    window.__md!.resetFrameWork();
+    window.__md!.resetJuiceStats();
+  });
+  const stressEnd = Date.now() + 8000;
+  let peakParticles = 0;
+  let shotStress = false;
+  while (Date.now() < stressEnd) {
+    await sleep(250);
+    const j = await page.evaluate(() => window.__md!.juice());
+    peakParticles = Math.max(peakParticles, j.particles);
+    if (!shotStress && Date.now() > stressEnd - 4000) {
+      await shot(page, '11-stress');
+      shotStress = true;
+    }
+  }
+  const stressFrames = await page.evaluate(() => window.__md!.frameWork());
+  const stressJuice = await page.evaluate(() => window.__md!.juice());
+  await page.evaluate(() => window.__md!.setStress(false));
+  stressFrames.sort((x, y) => x - y);
+  const sp95 = stressFrames[Math.floor(stressFrames.length * 0.95)] ?? 0;
+  check('frame-work-all-effects', stressFrames.length > 100 && sp95 < 8, `p95=${sp95.toFixed(2)} ms max=${(stressFrames.at(-1) ?? 0).toFixed(2)} ms over ${stressFrames.length} frames, peak particles=${peakParticles}`);
+  const ft = stressJuice.flashTimes;
+  let worstWindow = 0;
+  for (let i = 0; i < ft.length; i++) worstWindow = Math.max(worstWindow, ft.filter((t) => t >= ft[i]! && t < ft[i]! + 1).length);
+  check('flash-limit', ft.length > 5 && worstWindow <= 3, `${ft.length} big flashes in 8 s of nonstop requests, worst 1 s window=${worstWindow} (limit 3)`);
+
   check('no-console-errors', errors.length === 0, errors.slice(0, 3).join(' | ') || 'none');
+
+  // 12. Reduced motion: same launch and death, shake and flash must drop.
+  const measure = async (p: Page): Promise<{ shake: number; flash: number; zoom: number; reduced: boolean }> => {
+    let shake = 0;
+    let flash = 0;
+    let zoom = 0;
+    let reduced = false;
+    for (const run of [[3], [1]]) {
+      await startRun(p, run);
+      await p.evaluate(() => window.__md!.resetJuiceStats());
+      if (run[0] === 3) {
+        await waitFor(p, (x) => x.stuck, 4000);
+        await tap(p);
+        await sleep(500);
+      } else {
+        await waitFor(p, (x) => x.state === 'dying', 5000);
+        await sleep(700);
+      }
+      const j = await p.evaluate(() => window.__md!.juice());
+      shake = Math.max(shake, j.maxShakePx);
+      flash = Math.max(flash, j.maxFlashAlpha);
+      zoom = Math.max(zoom, j.maxZoomDev);
+      reduced = j.reduced;
+    }
+    return { shake, flash, zoom, reduced };
+  };
+  const normal = await measure(page);
+  const rmContext = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, reducedMotion: 'reduce' });
+  const rmPage = await rmContext.newPage();
+  await rmPage.goto(BASE);
+  await rmPage.waitForFunction(() => window.__md !== undefined);
+  const rm = await measure(rmPage);
+  await shot(rmPage, '12-reduced-motion-death');
+  check(
+    'reduced-motion',
+    rm.reduced && !normal.reduced && rm.shake < normal.shake * 0.35 && rm.flash < normal.flash * 0.35 && rm.zoom < 0.001,
+    `normal shake=${normal.shake.toFixed(1)}px flash=${normal.flash.toFixed(2)} zoom=${normal.zoom.toFixed(3)} | reduced shake=${rm.shake.toFixed(1)}px flash=${rm.flash.toFixed(2)} zoom=${rm.zoom.toFixed(3)}`,
+  );
 } finally {
   await browser.close();
 }

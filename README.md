@@ -35,10 +35,10 @@ pnpm dev          # http://localhost:5180 (also reachable from your phone on the
 pnpm typecheck
 pnpm build
 pnpm sim [n]      # proves every pattern (or only pattern n) can be cleared from every entry point
-pnpm verify [url] # headless Edge end-to-end checks against a running dev server; screenshots go to %TEMP%\agent-scratch\magnet-drop
+pnpm verify [url] # headless Edge end-to-end checks against a running dev server; screenshots go to %TEMP%\agent-scratch\magnet-drop-juice
 ```
 
-All feel and tuning numbers are in `src/config.ts`. The patterns are in `src/patterns.ts`.
+All feel and tuning numbers are in `src/config.ts` (effect tunables are in `JUICE`). The patterns are in `src/patterns.ts`.
 
 ## Layout
 
@@ -48,8 +48,9 @@ All feel and tuning numbers are in `src/config.ts`. The patterns are in `src/pat
 | `src/patterns.ts` | The 10 hand-authored obstacle patterns (the first 3 are the tutorial). |
 | `src/world.ts` | Spawns and culls patterns ahead of the camera. |
 | `src/game.ts` | State machine, camera, stall pressure, scoring and best score. |
-| `src/render.ts` | Canvas renderer on a letterboxed 360x640 playfield. |
+| `src/fx.ts` | Effects: shake, camera kicks and zoom, flashes (at most 3 big ones per second), particles, pulses and run intensity. Tones down under reduced motion. |
+| `src/render.ts` | Canvas renderer on a letterboxed 360x640 playfield, with pre-rendered glow sprites. |
 | `src/main.ts` | Boot, input and the fixed-step loop. |
 | `src/debug.ts` | Dev-only `window.__md` hooks used by `verify`. They are not included in production builds. |
 
-The design draft and the prototype plan are in [`docs/`](docs/).
+The design draft and the prototype plan are in [`docs/`](docs/). Research behind the effects is in [`docs/juice-research.md`](docs/juice-research.md).
