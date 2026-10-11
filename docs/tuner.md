@@ -47,33 +47,34 @@ Pull strength stays at 3000 (round) and 2600 (rail). The pull fades linearly to 
 | Magnets | Same colour bounce | Bounce off a same-colour magnet |
 | Run | Wall bounce | Bounce off the side walls |
 | Run | Screen push | Slowest scroll speed, so you can't hang on a magnet forever |
-| Run | Shield recharge | Patterns to clear before the shield comes back |
+| Run | Shield recharge | Gates to clear before the shield comes back |
 | Feel | Effects | Scales shake, flashes and zoom (0 turns them off) |
 | Feel | Volume | Master volume |
 | Feel | Show zone edges | Draws a dashed outline where each pull starts |
 
 ## Zones never touch
 
-`src/zones.ts` fits zones whenever a pattern spawns, and again whenever a zone slider moves:
+`src/zones.ts` fits zones whenever a gate spawns, and again whenever a zone slider moves:
 
 1. New magnets get their tuned reach: the designed reach times **Round zone size**, or **Rail zone size** for rails.
-2. Any two zones closer than **Gap between zones** are shrunk in proportion to how much room each has. The check covers magnets in the same pattern and the pattern just above.
+2. Any two zones closer than **Gap between zones** are shrunk in proportion to how much room each has. The check covers magnets in the same gate and the gate just above.
 3. A zone never shrinks below the orb radius plus a few pixels around the core, so every magnet still pulls before you touch it.
 
 Magnets that were already placed keep the reach they were fitted to. A later spawn can shrink them further but never grows them back.
 
-## Pattern changes
+## Gate changes
 
-With the smaller zones, five patterns could no longer be cleared from every entry point. Their layouts were re-searched until `pnpm sim` cleared them from all 18 entry points:
+This branch runs the `endless` gate generator (`src/gates.ts`) under the tuner physics. With the calmer fall and smaller zones, some gates could no longer be cleared from every entry point, and big zones were clipped by the gate above. The gates were re-laid out until `pnpm sim gates` cleared all 2376 catalogue entries:
 
-| Pattern | Change |
+| Gate | Change |
 |---|---|
-| Pull past | One larger blue magnet at (150, 180) instead of a small red plus a blue at the far edge; spikes 0 to 150 |
-| Catch and fling | Single red magnet at (130, 170), reach 260; the extra blue magnet is gone |
-| Rail slide | Red magnet moved to (250, 80) with reach 290; rail shortened to y 240 to 440 |
-| Corridor | Rails moved out to x 90 and 270 |
-| Slalom | Left magnets at x 60; narrower spike rows (150 to 210) |
+| Spacing | Gap between gates per tier 230 / 210 / 195 / 180 (was 150 / 130 / 115 / 100), so the gate above clips zones less |
+| Drift | Magnet reach 400; barrier at y 440 (was 380) |
+| Twin | Magnets at (28, 80) and (332, 330), reach 260; gaps at x 80 to 280 (was 60 to 300); barrier at y 600 (was 450) |
+| Perch | Magnet reach 340; barrier at y 520 (was 400) |
+| Rail | Steering magnet reach 320, at x 235 when the gap is on the rail side and x 190 when it is across; barrier at y 560 (was 460) |
+| Corridor | Rails at x 90 and 270 (was 120 and 240) |
 
-`pnpm sim` fits each pattern between every possible pattern above and below it. It then simulates each pattern at the smallest zone it can end up with. It reports a clash if any two zones are ever closer than the gap.
+`pnpm sim gates` fits each gate between every possible gate above and below it, then simulates it at the smallest zone it can end up with. It reports a clash if any two zones are ever closer than the gap. `pnpm sim runs` plays generated 60-gate runs with the camera chasing.
 
-`pnpm sim gravity=700 fieldScale=1` (any `key=value` pairs) checks other slider values the same way. The fairness guarantee only covers the defaults.
+`pnpm sim gates gravity=700 fieldScale=1` (any `key=value` pairs) checks other slider values the same way. The fairness guarantee only covers the defaults.

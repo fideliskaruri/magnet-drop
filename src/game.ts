@@ -10,7 +10,6 @@ import {
   JUICE,
   ORB_RADIUS,
   RESTART_LOCK,
-  SCORE_DIVISOR,
   SHIELD_GRACE,
   SHIELD_HITSTOP,
   SHIELD_HOP,
@@ -19,7 +18,7 @@ import {
 } from './config.ts';
 import { Fx, P_SPARK } from './fx.ts';
 import { attracts, closestPoint, fieldU, flip, hitsSpikes, step, touchingSpikes } from './physics.ts';
-import type { GameStateName, Orb, SpikeRow } from './types.ts';
+import type { GameStateName, GateSpec, Orb, SpikeRow } from './types.ts';
 import { TUNE } from './tune.ts';
 import { World } from './world.ts';
 
@@ -67,12 +66,11 @@ export class Game {
   /** Seconds left of passing harmlessly through spikes after the shield breaks. */
   grace = 0;
   shieldsUsed = 0;
-  patternsPassed = 0;
   private sinceShield = 0;
   startShield = true;
   /** Set by the dev hook to make runs reproducible. */
   seedOverride: number | null = null;
-  forcedPatterns: number[] = [];
+  forcedGates: GateSpec[] = [];
   /** The spike row that killed the orb (rendered white hot). */
   deathRow: SpikeRow | null = null;
   private taps = 0;
@@ -106,7 +104,7 @@ export class Game {
 
   private startRun(): void {
     const seed = this.seedOverride ?? Math.floor(Math.random() * 2 ** 31);
-    this.world = new World(seed, this.forcedPatterns);
+    this.world = new World(seed, this.forcedGates);
     this.orb = Game.freshOrb();
     this.camY = this.prevCamY = this.orb.y - VIEW_H * CAMERA_ANCHOR;
     this.world.update(this.camY);
@@ -137,7 +135,6 @@ export class Game {
     this.shield = this.startShield;
     this.grace = 0;
     this.shieldsUsed = 0;
-    this.patternsPassed = 0;
     this.sinceShield = 0;
     this.setState('playing');
     this.fx.onStart(this.orb.x, this.orb.y, this.color());
@@ -253,8 +250,13 @@ export class Game {
       return;
     }
     this.world.update(this.camY);
+    // One point per barrier cleared.
     const passed = this.world.passed(o.y);
-    this.patternsPassed += passed;
+    if (passed > 0) {
+      this.score += passed;
+      this.fx.scorePop = Math.max(this.fx.scorePop, 0.6);
+      sound()?.gate(this.pan());
+    }
     if (!this.shield && passed > 0) {
       this.sinceShield += passed;
       if (this.sinceShield >= TUNE.shieldRecharge) {
@@ -264,7 +266,6 @@ export class Game {
         sound()?.shieldReady();
       }
     }
-    this.score = Math.max(this.score, Math.floor(o.y / SCORE_DIVISOR));
     if (this.score >= this.nextMilestone) {
       const m = this.nextMilestone;
       this.nextMilestone += JUICE.milestoneEvery;

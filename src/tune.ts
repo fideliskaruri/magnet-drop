@@ -110,7 +110,7 @@ export const SLIDER_GROUPS: SliderGroup[] = [
     title: 'Run',
     sliders: [
       { key: 'cameraSpeed', label: 'Screen push', hint: 'Slowest the screen scrolls, so you can\u2019t hang forever', min: 0, max: 160, step: 5 },
-      { key: 'shieldRecharge', label: 'Shield recharge', hint: 'Patterns to clear before the shield is back', min: 1, max: 15, step: 1 },
+      { key: 'shieldRecharge', label: 'Shield recharge', hint: 'Gates to clear before the shield is back', min: 1, max: 15, step: 1 },
     ],
   },
   {
@@ -123,7 +123,7 @@ export const SLIDER_GROUPS: SliderGroup[] = [
   },
 ];
 
-export const TUNE_KEY = 'magnetdrop.tuner.settings';
+export const TUNE_KEY = 'magnetdrop.endless-tuner.settings';
 
 export const TUNE: Tune = { ...DEFAULTS };
 

@@ -9,21 +9,9 @@ A one-tap vertical arcade prototype. Your orb falls through a field of magnets a
 
 Play it here: https://fideliskaruri.github.io/magnet-drop/
 
-This is the `sound` branch: same game, reworked sound. Play it at https://fideliskaruri.github.io/magnet-drop/sound/
+This is the **endless-tuner** branch: the `tuner` build (forgiving physics, reworked sound, intense effects, live tuning sliders) on the `endless` procedural course. The course is generated as you fall, one gate at a time. Each gate is a spike barrier with one gap plus a few magnets. Every gap you drop through is a point. Gaps narrow and gates come closer as the score climbs (tiers start at gates 6, 16 and 30). Play it at https://fideliskaruri.github.io/magnet-drop/endless-tuner/
 
-### Sound
-
-Everything is synthesised live with WebAudio (`src/audio.ts`); there are no audio files. Notes sit on A minor pentatonic so flips, launches and chimes always fit together.
-
-- **Field hum** rises in pitch and brightness as an attracting magnet pulls you in. **Repel buzz** is a beating, uneasy tone when a same-colour magnet pushes.
-- **Flip** is a plucked note. Blue is round, red is bright and a fifth higher. Quick flips climb the scale.
-- **Stick** is a heavy metallic clank, louder on harder hits. While stuck, a held tone trembles faster the longer you hang on.
-- **Launch** is a sub kick, a whoosh and a rising chord. Chained launches climb higher.
-- **Danger** is a pulsing tritone that gets louder and faster near spikes or the top of the screen. Skimming spikes and surviving gives a whoosh and a ting.
-- **Death** crunches on spikes and gets swallowed on a stall, then falls on a short sigh. Milestones every 100 points chime, and passing your best sparkles.
-- Sounds pan with the orb, bounces boing and walls knock. A limiter on the output keeps everything under full scale.
-
-The speaker button in the top right (or the M key) turns sound off without flipping your orb. It remembers your choice.
+Sound is synthesised live with WebAudio (`src/audio.ts`); clearing a gate gives a short two-note blip. The speaker button (or M) mutes without flipping your orb.
 
 ### Variants
 
@@ -38,6 +26,7 @@ Each experiment lives on its own branch and deploys to its own URL. Every push t
 | `sound` | Reworked sound design | https://fideliskaruri.github.io/magnet-drop/sound/ |
 | `juice` | More intense visual effects | https://fideliskaruri.github.io/magnet-drop/juice/ |
 | `tuner` | Easy + sound + juice combined, with live tuning sliders | https://fideliskaruri.github.io/magnet-drop/tuner/ |
+| `endless-tuner` | Tuner combined with endless procedural gates | https://fideliskaruri.github.io/magnet-drop/endless-tuner/ |
 
 ## Run locally
 
@@ -51,26 +40,26 @@ pnpm dev          # http://localhost:5180 (also reachable from your phone on the
 ```sh
 pnpm typecheck
 pnpm build
-pnpm sim [n]      # proves every pattern (or only pattern n) can be cleared from every entry point
-pnpm verify [url] # headless Edge end-to-end checks against a running dev server; screenshots go to %TEMP%\agent-scratch\magnet-drop-tuner
+pnpm sim [all|gates|runs] [seeds]  # proves every gate the generator can make is beatable from 18 entries, and 60-gate generated runs clear with the camera chasing
+pnpm verify [url] # headless Edge end-to-end checks against a running dev server; screenshots go to %TEMP%\agent-scratch\magnet-drop-endless-tuner
 ```
 
-Speeds, forces, zone sizes and bounces are in `src/tune.ts` and can be changed live from the in-game tuning panel (gear button or T). See [docs/tuner.md](docs/tuner.md) for the defaults, the sliders and how zones are kept apart. Other constants are in `src/config.ts` (effect tunables are in `JUICE`). The patterns are in `src/patterns.ts`.
+Speeds, forces, zone sizes and bounces are in `src/tune.ts` and can be changed live from the in-game tuning panel (gear button or T). See [docs/tuner.md](docs/tuner.md) for the defaults, the sliders and how zones are kept apart. Other constants are in `src/config.ts` (effect tunables are in `JUICE`). The gate generator is in `src/gates.ts`. Scores and settings are stored under `magnetdrop.endless-tuner.*`.
 
-`pnpm sim` also takes `key=value` overrides, e.g. `pnpm sim gravity=700 fieldScale=1`.
+`pnpm sim` also takes `key=value` overrides, e.g. `pnpm sim gates gravity=700 fieldScale=1`, and `SIM_ONLY=twin,rail` limits the gate check to some families.
 
 ## Layout
 
 | File | Purpose |
 |---|---|
 | `src/physics.ts` | Pure physics: magnet forces, sticking, launching, walls and spikes. Shared by the game and `sim`. |
-| `src/patterns.ts` | The 10 hand-authored obstacle patterns (the first 3 are the tutorial). |
-| `src/world.ts` | Spawns and culls patterns ahead of the camera. |
+| `src/gates.ts` | Pure gate generator: 6 gate families from small discrete choices, difficulty tiers, a seeded stream. Shared by the game and `sim`. |
+| `src/world.ts` | Spawns and culls generated gates ahead of the camera and fits each new gate's zones against the one above. |
 | `src/tune.ts` | Live tunables, their defaults, slider ranges and saved settings. |
 | `src/zones.ts` | Fits magnet zones so no two come closer than the set gap. |
 | `src/panel.ts` | The tuning panel: sliders, reset, copy values. Pauses the game while open. |
 | `src/audio.ts` | Synthesised sound: continuous layers driven every frame plus capped one-shot voices, a mute switch and offline renders for `verify`. |
-| `src/game.ts` | State machine, camera, stall pressure, scoring and best score. |
+| `src/game.ts` | State machine, camera, stall pressure, scoring (one point per gate), shield and best score. |
 | `src/fx.ts` | Effects: shake, camera kicks and zoom, flashes (at most 3 big ones per second), particles, pulses and run intensity. Tones down under reduced motion. |
 | `src/render.ts` | Canvas renderer on a letterboxed 360x640 playfield, with pre-rendered glow sprites. |
 | `src/main.ts` | Boot, input and the fixed-step loop. |

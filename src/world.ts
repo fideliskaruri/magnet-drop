@@ -1,43 +1,31 @@
-import { BREATHER_AFTER_TIER, PATTERN_GAP, TIER_UNLOCK, VIEW_H } from './config.ts';
-import { PATTERNS, TUTORIAL_COUNT } from './patterns.ts';
-import type { Magnet, PlacedPattern, SpikeRow } from './types.ts';
+import { FIRST_GATE_TOP, VIEW_H } from './config.ts';
+import { GateStream, placeGate } from './gates.ts';
+import type { GateSpec, Magnet, PlacedGate, SpikeRow } from './types.ts';
 import { fitZones } from './zones.ts';
 
-const FIRST_TOP = 240;
-
-function mulberry32(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
 export class World {
-  placed: PlacedPattern[] = [];
+  placed: PlacedGate[] = [];
   magnets: Magnet[] = [];
   spikes: SpikeRow[] = [];
-  private rand: () => number;
+  private readonly stream: GateStream;
   private count = 0;
-  private last = -1;
-  private nextTop = FIRST_TOP;
-  private readonly bottoms: number[] = [];
-  private readonly forced: number[];
+  private nextTop = FIRST_GATE_TOP;
+  private scored = 0;
 
-  /** `forced` pins the first pattern indices (used by tests and the simulator). */
-  constructor(seed: number, forced: number[] = []) {
-    this.rand = mulberry32(seed);
-    this.forced = forced;
+  /** `forced` pins the first gate specs (used by browser checks). */
+  constructor(seed: number, forced: GateSpec[] = []) {
+    this.stream = new GateStream(seed, forced);
   }
 
-  /** Keep patterns spawned two screens below the camera and drop ones well above it. */
+  /** Keep gates spawned two screens below the camera and drop ones well above it. */
   update(camY: number): void {
     let changed = false;
     while (this.nextTop < camY + VIEW_H * 2) {
-      this.spawn();
+      const g = placeGate(this.count++, this.stream.next(), this.nextTop);
+      // Fit against the gate above too, so zones never touch across the spacing.
+      fitZones(this.placed[this.placed.length - 1]?.magnets ?? [], g.magnets);
+      this.nextTop = g.nextTop;
+      this.placed.push(g);
       changed = true;
     }
     const before = this.placed.length;
@@ -48,55 +36,25 @@ export class World {
     }
   }
 
-  private pick(): number {
-    const n = this.count++;
-    if (n < this.forced.length) return this.forced[n]!;
-    if (this.forced.length === 0 && n < TUTORIAL_COUNT) return n;
-    const lastTier = this.last >= 0 ? PATTERNS[this.last]!.tier : 0;
-    const maxTier = lastTier >= BREATHER_AFTER_TIER ? 0 : TIER_UNLOCK.filter((u) => n >= u).length - 1;
-    // Pattern 0 is the bare opening drop; it never comes back.
-    const pool: number[] = [];
-    for (let i = 1; i < PATTERNS.length; i++) if (i !== this.last && PATTERNS[i]!.tier <= maxTier) pool.push(i);
-    return pool[Math.floor(this.rand() * pool.length)]!;
-  }
-
-  private spawn(): void {
-    const index = this.pick();
-    this.last = index;
-    const p = PATTERNS[index]!;
-    const top = this.nextTop;
-    this.bottoms.push(top + p.height);
-    const magnets = p.magnets.map((m) =>
-      m.kind === 'point' ? { ...m, y: m.y + top } : { ...m, ay: m.ay + top, by: m.by + top },
-    );
-    // Fit against the pattern above too, so zones never touch across the gap.
-    const above = this.placed[this.placed.length - 1]?.magnets ?? [];
-    fitZones(above, magnets);
-    this.placed.push({
-      index,
-      tier: p.tier,
-      top,
-      height: p.height,
-      magnets,
-      spikes: p.spikes.map((s) => ({ ...s, y: s.y + top })),
-    });
-    this.nextTop = top + p.height + PATTERN_GAP;
-  }
-
   /** Re-fit every live magnet after a zone setting changes. */
   refit(): void {
     fitZones([], this.magnets);
   }
 
-  patternAt(y: number): PlacedPattern | undefined {
-    return this.placed.find((p) => y >= p.top && y < p.top + p.height + PATTERN_GAP);
+  gate(index: number): PlacedGate | undefined {
+    return this.placed.find((p) => p.index === index);
   }
 
-  /** How many patterns have newly been cleared now that the orb is at `y`. */
+  gateAt(y: number): PlacedGate | undefined {
+    for (let i = this.placed.length - 1; i >= 0; i--) if (y >= this.placed[i]!.top) return this.placed[i];
+    return undefined;
+  }
+
+  /** How many barriers the orb has newly dropped below now that it is at `y`. One point each. */
   passed(y: number): number {
     let n = 0;
-    while (this.bottoms.length && y > this.bottoms[0]!) {
-      this.bottoms.shift();
+    for (let g = this.gate(this.scored); g && y > g.passY; g = this.gate(this.scored)) {
+      this.scored++;
       n++;
     }
     return n;

@@ -915,7 +915,7 @@ export class Renderer {
     ctx.restore();
     ctx.fillStyle = COLORS.spike;
     ctx.font = '800 12px system-ui, sans-serif';
-    ctx.fillText('TUNER', VIEW_W / 2, 230);
+    ctx.fillText('ENDLESS · TUNER', VIEW_W / 2, 230);
     ctx.fillStyle = COLORS.dim;
     ctx.font = '700 13px system-ui, sans-serif';
     ctx.fillText('BEST', VIEW_W / 2, 262);
@@ -931,7 +931,8 @@ export class Renderer {
     ctx.globalAlpha = 1;
     ctx.fillStyle = COLORS.dim;
     ctx.font = '600 12px system-ui, sans-serif';
-    ctx.fillText('Tap to flip polarity. Opposites attract.', VIEW_W / 2, 560);
+    ctx.fillText('Tap to flip polarity. Opposites attract.', VIEW_W / 2, 540);
+    ctx.fillText('Drop through the gaps. Every gap is a point.', VIEW_W / 2, 560);
     ctx.fillText('Your shield blocks one spike hit and comes back.', VIEW_W / 2, 580);
     ctx.fillText('Press T or the gear to tune the physics.', VIEW_W / 2, 600);
     ctx.restore();

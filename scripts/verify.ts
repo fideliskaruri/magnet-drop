@@ -7,11 +7,12 @@ import { chromium, type Page } from 'playwright-core';
 import { AUDIO } from '../src/config.ts';
 import type { DebugHook } from '../src/debug.ts';
 import { DEFAULTS } from '../src/tune.ts';
+import type { Family, GateSpec } from '../src/types.ts';
 
 type Snap = ReturnType<DebugHook['snapshot']>;
 
-const BASE = process.argv[2] ?? 'http://localhost:5197/';
-const OUT = join(tmpdir(), 'agent-scratch', 'magnet-drop-tuner');
+const BASE = process.argv[2] ?? 'http://localhost:5180/';
+const OUT = join(tmpdir(), 'agent-scratch', 'magnet-drop-endless-tuner');
 mkdirSync(OUT, { recursive: true });
 
 const results: { name: string; ok: boolean; detail: string }[] = [];
@@ -28,6 +29,17 @@ const mix = (page: Page): Promise<ReturnType<DebugHook['mix']>> => page.evaluate
 const dbfs = (v: number): string => (v > 0 ? `${(20 * Math.log10(v)).toFixed(1)} dBFS` : '-inf');
 const shot = (page: Page, name: string): Promise<Buffer> => page.screenshot({ path: join(OUT, `${name}.png`) });
 
+const gate = (family: Family, v: number[], o: Partial<GateSpec> = {}): GateSpec => ({ family, tier: 0, v, mirror: false, swap: false, ...o });
+
+// Idle (never tapping) the blue orb dropped at x=180:
+// - drift[1,0]: red magnet on the left pulls it left. With swap the magnet is blue and pushes it right.
+const DRIFT = gate('drift', [1, 0]);
+// - perch[1,0]: a red magnet right under the spawn, gap under it. The orb lands and sticks.
+const PERCH = gate('perch', [1, 0]);
+// - drift[3,0] swapped: pushed right into the gap at x=310, a free point. drift[0,0] swapped: pushed onto the spikes.
+const FREE = gate('drift', [3, 0], { swap: true });
+const KILL = gate('drift', [0, 0], { swap: true });
+
 async function waitFor(page: Page, pred: (s: Snap) => boolean, timeoutMs: number): Promise<Snap | null> {
   const end = Date.now() + timeoutMs;
   while (Date.now() < end) {
@@ -38,11 +50,11 @@ async function waitFor(page: Page, pred: (s: Snap) => boolean, timeoutMs: number
   return null;
 }
 
-/** Back to the ready screen, then start a run on the given patterns. */
-async function startRun(page: Page, patterns: number[], seed = 1, shield = true): Promise<void> {
+/** Back to the ready screen, then start a run on the given gates. */
+async function startRun(page: Page, gates: GateSpec[], seed = 1, shield = true): Promise<void> {
   await page.reload();
   await page.waitForFunction(() => window.__md !== undefined);
-  await page.evaluate(([s, p, sh]) => window.__md!.setup(s as number, p as number[], sh as boolean), [seed, patterns, shield] as const);
+  await page.evaluate(([s, p, sh]) => window.__md!.setup(s as number, p as GateSpec[], sh as boolean), [seed, gates, shield] as const);
   await tap(page);
   await waitFor(page, (s) => s.state === 'playing', 1000);
 }
@@ -66,7 +78,7 @@ try {
   check('boot', s.state === 'ready' && errors.length === 0, `state=${s.state} errors=${errors.length}`);
 
   // 2. Start and flip
-  await page.evaluate(() => window.__md!.setup(1, [0]));
+  await page.evaluate((g) => window.__md!.setup(1, g), [DRIFT]);
   await tap(page);
   s = (await waitFor(page, (x) => x.state === 'playing', 1000)) ?? (await snap(page));
   const p0 = s.polarity;
@@ -120,26 +132,24 @@ try {
   check('sounds-not-clipping', hot.length === 0, hot.map((r) => `${r.name} ${dbfs(r.peak)}`).join(', ') || `loudest single ${dbfs(Math.max(...renders.filter((r) => r.name !== 'everything').map((r) => r.peak)))}, everything at once ${dbfs(worst?.peak ?? 0)}`);
   check('voices-released', leaked.length === 0, leaked.map((r) => r.name).join(', ') || 'every one-shot freed its voice when done');
 
-  // 3. Attract vs repel on pattern 1 (red magnet at x=260, orb falls at x=180).
-  await startRun(page, [0]);
-  let a = await waitFor(page, (x) => x.patternTop !== null && x.y > x.patternTop + 80, 3000);
-  await sleep(250);
+  // 3. Attract vs repel: drift gate with a red magnet on the left, orb dropped at x=180.
+  // Blue is pulled left; flipped to red it is pushed right. Sample the field sound while it acts.
+  const drifted = (x: Snap): boolean => Math.abs(x.x - 180) > 15;
+  await startRun(page, [DRIFT]);
+  let b = await waitFor(page, drifted, 3000);
   const attractMix = await mix(page);
-  let b = await snap(page);
-  const attractVx = b.vx;
-  check('attract-pulls-toward', a !== null && attractVx > 20, `blue orb vx=${attractVx.toFixed(1)} (magnet is to the right)`);
-  await startRun(page, [0]);
+  check('attract-pulls-toward', b !== null && b.x < 165 && b.vx < 0, `blue orb x=${b?.x.toFixed(0)} vx=${b?.vx.toFixed(1)} (red magnet on the left)`);
+  await startRun(page, [DRIFT]);
   await tap(page);
-  a = await waitFor(page, (x) => x.patternTop !== null && x.y > x.patternTop + 80, 3000);
-  await sleep(250);
+  b = await waitFor(page, drifted, 3000);
   const repelMix = await mix(page);
-  b = await snap(page);
+  await sleep(150);
   await shot(page, '03-repel');
   check('field-sound-follows', attractMix.attract > 0.2 && attractMix.repel === 0 && repelMix.repel > 0.2 && repelMix.attract === 0, `blue near red: hum=${attractMix.attract.toFixed(2)} buzz=${attractMix.repel.toFixed(2)}; red near red: hum=${repelMix.attract.toFixed(2)} buzz=${repelMix.repel.toFixed(2)}`);
-  check('repel-pushes-away', a !== null && b.polarity === 'red' && b.vx < -20, `red orb vx=${b.vx.toFixed(1)}`);
+  check('repel-pushes-away', b !== null && b.polarity === 'red' && b.x > 195 && b.vx > 0, `red orb x=${b?.x.toFixed(0)} vx=${b?.vx.toFixed(1)}`);
 
-  // 4. Stick and launch on pattern 4 (red magnet the blue orb falls onto).
-  await startRun(page, [3]);
+  // 4. Stick and launch on the perch (red magnet right under the blue orb).
+  await startRun(page, [PERCH]);
   const stuck = await waitFor(page, (x) => x.stuck, 4000);
   await sleep(150);
   const stuckMix = await mix(page);
@@ -153,21 +163,21 @@ try {
   check('stuck-sound', stuckMix.stuck === 1 && stuckMix.attract === 0, `stuck layer=${stuckMix.stuck} hum=${stuckMix.attract}`);
   check('stick-and-launch', stuck !== null && afterLaunch.launches === 1 && !afterLaunch.stuck && speed >= 550, `stuck=${stuck !== null} launches=${afterLaunch.launches} speed=${speed.toFixed(0)}`);
 
-  // 5a. The shield: an idle fall onto Rail slide's shelf, but the shield absorbs the hit and the run goes on.
-  await startRun(page, [5, 9, 9, 9, 9, 9, 9, 9]);
+  // 5a. The shield: an idle fall onto the spikes, but the shield absorbs the hit and the run goes on.
+  await startRun(page, [KILL, FREE, FREE, FREE, FREE, FREE, FREE, FREE, FREE, FREE]);
   s = await snap(page);
   const shieldAtStart = s.shield;
   const saved = await waitFor(page, (x) => x.shieldsUsed === 1, 5000);
   await sleep(120);
   await shot(page, '05a-shield-saved');
-  const afterSave = await waitFor(page, (x) => x.grace <= 0 && x.patternsPassed >= 1, 4000);
+  const afterSave = await waitFor(page, (x) => x.grace <= 0 && x.score >= 1, 4000);
   check(
     'shield-saves-once',
     shieldAtStart && saved !== null && saved.state === 'playing' && !saved.shield && afterSave !== null && afterSave.state === 'playing',
     `shield at start=${shieldAtStart} used=${saved?.shieldsUsed} state after hit=${saved?.state} still playing past the spikes=${afterSave?.state === 'playing'}`,
   );
 
-  // 5b. The shield comes back after clearing a few more patterns (Rest patterns, tapping to stay off the magnet).
+  // 5b. The shield comes back after clearing a few more gates (free drift gates, no taps needed).
   let back5: Snap | null = null;
   const until = Date.now() + 25000;
   while (Date.now() < until) {
@@ -180,12 +190,13 @@ try {
     await sleep(60);
   }
   await shot(page, '05b-shield-ready');
-  check('shield-recharges', back5 !== null && back5.state === 'playing' && back5.shield, `state=${back5?.state} shield=${back5?.shield} patterns passed=${back5?.patternsPassed}`);
+  check('shield-recharges', back5 !== null && back5.state === 'playing' && back5.shield, `state=${back5?.state} shield=${back5?.shield} gates scored=${back5?.score}`);
 
-  // 5c. Death and fast restart on Rail slide without flipping and without a shield.
+  // 5c. One point per gate: two free gates then a fatal one, no taps, no shield. Then a fast restart.
   await page.evaluate(() => localStorage.clear());
-  await startRun(page, [5], 1, false);
-  const dead = await waitFor(page, (x) => x.state === 'dying', 5000);
+  await startRun(page, [FREE, FREE, KILL], 1, false);
+  const one = await waitFor(page, (x) => x.score === 1, 6000);
+  const dead = await waitFor(page, (x) => x.state === 'dying', 10000);
   const deathScore = dead?.score ?? 0;
   await sleep(200);
   await shot(page, '05-death');
@@ -194,17 +205,16 @@ try {
   await tap(page);
   const back = await waitFor(page, (x) => x.state === 'playing', 1000);
   const restartMs = Date.now() - t0;
-  check('death', dead !== null, `died at score ${deathScore}`);
+  check('score-per-gate', one !== null && dead !== null && deathScore === 2, `score at death=${deathScore} (two free gates, then the spikes)`);
   check('restart-under-1s', back !== null && back.score < deathScore, `restart took ${restartMs} ms after the 650 ms lockout, score reset to ${back?.score}`);
   await page.reload();
   await page.waitForFunction(() => window.__md !== undefined);
   const best = (await snap(page)).best;
   const keys = await page.evaluate(() => Object.keys(localStorage));
-  check('best-persists', best === deathScore && best > 0 && keys.includes('magnetdrop.tuner.best'), `best after reload=${best} keys=${keys.join(',')}`);
+  check('best-persists', best === deathScore && best > 0 && keys.includes('magnetdrop.endless-tuner.best'), `best after reload=${best} keys=${keys.join(',')}`);
 
-  // 6. Stall pressure: hang on the Rest magnet and get scrolled off the top.
-  await startRun(page, [9]);
-  await tap(page);
+  // 6. Stall pressure: hang on the perch and get scrolled off the top.
+  await startRun(page, [PERCH]);
   const hung = await waitFor(page, (x) => x.stuck, 4000);
   let peakDanger = 0;
   let stallDeath: Snap | null = null;
@@ -221,28 +231,34 @@ try {
   check('stall-danger-sound', peakDanger > 0.6, `danger layer peaked at ${peakDanger.toFixed(2)} before the screen caught the orb`);
   check('stall-kills', hung !== null && stallDeath !== null, `stuck=${hung !== null} died=${stallDeath !== null} at y=${stallDeath?.y.toFixed(0)} camY=${stallDeath?.camY.toFixed(0)}`);
 
-  // 7. Screenshot every pattern.
-  for (let i = 0; i < 10; i++) {
-    await startRun(page, [i, 9]);
-    await sleep(650);
-    await shot(page, `07-pattern-${String(i + 1).padStart(2, '0')}`);
+  // 7. Screenshot every family at its easiest and hardest tier (camera frames the gate on entry).
+  let wrongScreens = 0;
+  for (const family of ['drift', 'twin', 'perch', 'rail', 'slope', 'corridor'] as Family[]) {
+    for (const tier of [family === 'corridor' ? 2 : family === 'rail' || family === 'slope' ? 1 : 0, 3]) {
+      await startRun(page, [gate(family, [0, 0, 0], { tier })]);
+      const x = await waitFor(page, (q) => q.gateTop !== null, 3000);
+      await sleep(100);
+      await shot(page, `07-${family}-t${tier}`);
+      if (x?.family !== family || x.tier !== tier) {
+        wrongScreens += 1;
+        check(`screen-${family}-t${tier}`, false, `orb is in ${x?.family} t${x?.tier}`);
+      }
+    }
   }
-  check('pattern-screens', true, `saved to ${OUT}`);
+  check('family-screens', wrongScreens === 0, `12 screens, wrong gate in ${wrongScreens}, saved to ${OUT}`);
 
-  // 7b. Difficulty ramp: the first patterns after the tutorial are easy, hard ones come later and are followed by a breather.
-  const rampIssues: string[] = [];
-  let hardSeen = 0;
-  for (let seed = 1; seed <= 30; seed++) {
-    const tiers = await page.evaluate((sd) => window.__md!.ramp(sd, 40), seed);
-    if (tiers.slice(0, 8).some((t) => t > 0)) rampIssues.push(`seed ${seed}: early ${tiers.slice(0, 8).join('')}`);
-    if (tiers.slice(0, 14).some((t) => t > 1)) rampIssues.push(`seed ${seed}: hard too soon`);
-    tiers.forEach((t, i) => {
-      if (t === 2 && i + 1 < tiers.length && tiers[i + 1] !== 0) rampIssues.push(`seed ${seed}: no breather at ${i}`);
-    });
-    hardSeen += tiers.filter((t) => t === 2).length;
-  }
-  if (hardSeen === 0) rampIssues.push('hard patterns never appear');
-  check('difficulty-ramp', rampIssues.length === 0, rampIssues.slice(0, 3).join(' | ') || `30 seeds: first 8 patterns easy, a breather after each of the ${hardSeen} hard ones`);
+  // 7b. Generation: deterministic per seed, different across seeds, ramps up in difficulty.
+  const runs = await page.evaluate(() => [window.__md!.preview(7, 40), window.__md!.preview(7, 40), window.__md!.preview(8, 40)]);
+  const [r7, r7b, r8] = runs.map((r) => JSON.stringify(r));
+  const tiers = runs[0]!.map((g) => g.tier);
+  const lateFamilies = new Set(runs[0]!.slice(30).map((g) => g.family));
+  const repeats = runs[0]!.filter((g, i) => i > 0 && g.family === runs[0]![i - 1]!.family).length;
+  check('seeded-generation', r7 === r7b && r7 !== r8, `same seed identical=${r7 === r7b}, other seed differs=${r7 !== r8}`);
+  check(
+    'difficulty-ramp',
+    tiers[0] === 0 && tiers[39] === 3 && tiers.every((t, i) => i === 0 || t >= tiers[i - 1]!) && lateFamilies.size >= 4 && repeats === 0,
+    `tiers ${tiers.join('')}, ${lateFamilies.size} families after gate 30, back-to-back repeats=${repeats}`,
+  );
 
   // 8. Long session: mash taps for 20 s, auto-restarting. Object counts must stay bounded and per-frame work small.
   // (Headless Edge caps rAF at 30 fps, so we measure update + render work time, not frame intervals.)
@@ -283,15 +299,15 @@ try {
   check('frame-work', frames.length > 100 && p95 < 8, `p95 update+render=${p95.toFixed(2)} ms over ${frames.length} frames (budget 8 ms)`);
 
   // 9. Juice: consecutive frames around a launch and a death, in slow motion.
-  await startRun(page, [3]);
+  await startRun(page, [PERCH]);
   await waitFor(page, (x) => x.stuck, 4000);
   await sleep(120);
   await page.evaluate(() => window.__md!.setTimeScale(0.08));
   await tap(page);
   for (let i = 0; i < 8; i++) await shot(page, `09-launch-burst-${i}`);
   await page.evaluate(() => window.__md!.setTimeScale(1));
-  await startRun(page, [5], 1, false);
-  await waitFor(page, (x) => x.patternTop !== null && x.y > x.patternTop - 40, 4000);
+  await startRun(page, [KILL], 1, false);
+  await waitFor(page, (x) => x.passY !== null && x.y > x.passY - 140, 6000);
   await page.evaluate(() => window.__md!.setTimeScale(0.08));
   await waitFor(page, (x) => x.state === 'dying', 30000);
   for (let i = 0; i < 10; i++) await shot(page, `09-death-burst-${i}`);
@@ -316,7 +332,7 @@ try {
   // 11. Every effect firing at once: frame budget and the flash limiter.
   await page.reload();
   await page.waitForFunction(() => window.__md !== undefined);
-  await page.evaluate(() => window.__md!.setup(1, [9]));
+  await page.evaluate((g) => window.__md!.setup(1, g), [PERCH]);
   await tap(page);
   await page.evaluate(() => {
     window.__md!.setHeatFloor(1);
@@ -355,7 +371,7 @@ try {
       el.value = String(val);
       el.dispatchEvent(new Event('input', { bubbles: true }));
     }, [key, v] as const);
-  await startRun(page, [8, 4], 1);
+  await startRun(page, [gate('twin', [1, 0]), DRIFT], 1);
   await sleep(400);
   await page.keyboard.press('KeyT');
   const q0 = await snap(page);
@@ -410,7 +426,7 @@ try {
   await page.locator('#tune').evaluate((el) => (el.scrollTop = el.scrollHeight));
   await page.getByRole('button', { name: 'Reset to defaults' }).click();
   const u3 = await tuneState();
-  const stored = await page.evaluate(() => localStorage.getItem('magnetdrop.tuner.settings'));
+  const stored = await page.evaluate(() => localStorage.getItem('magnetdrop.endless-tuner.settings'));
   check(
     'tune-reset',
     JSON.stringify(u3.values) === JSON.stringify(DEFAULTS) && (await page.locator('#tune .tune-row.changed').count()) === 0,
@@ -437,15 +453,15 @@ try {
     let flash = 0;
     let zoom = 0;
     let reduced = false;
-    for (const run of [[3], [5]]) {
-      await startRun(p, run, 1, false);
+    for (const launch of [true, false]) {
+      await startRun(p, [launch ? PERCH : KILL], 1, false);
       await p.evaluate(() => window.__md!.resetJuiceStats());
-      if (run[0] === 3) {
+      if (launch) {
         await waitFor(p, (x) => x.stuck, 4000);
         await tap(p);
         await sleep(500);
       } else {
-        await waitFor(p, (x) => x.state === 'dying', 5000);
+        await waitFor(p, (x) => x.state === 'dying', 8000);
         await sleep(700);
       }
       const j = await p.evaluate(() => window.__md!.juice());

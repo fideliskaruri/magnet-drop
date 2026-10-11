@@ -3,7 +3,8 @@ import { TUNE, type Tune } from './tune.ts';
 import { zoneClashes } from './zones.ts';
 import { audioStats, renderOffline, SOUND_NAMES, type AudioStats, type RenderResult, type SoundName } from './audio.ts';
 import type { Game } from './game.ts';
-import { World } from './world.ts';
+import { GateStream } from './gates.ts';
+import type { GateSpec } from './types.ts';
 
 export interface DebugHook {
   snapshot(): {
@@ -18,19 +19,22 @@ export interface DebugHook {
     best: number;
     camY: number;
     launches: number;
-    pattern: number | null;
-    patternTop: number | null;
+    /** Gate the orb is in (index, family, tier, top and pass line). */
+    gate: number | null;
+    family: string | null;
+    tier: number | null;
+    gateTop: number | null;
+    passY: number | null;
     magnets: number;
     spikes: number;
     shield: boolean;
     grace: number;
     shieldsUsed: number;
-    patternsPassed: number;
   };
-  /** Fix the seed and the first pattern indices (0-based) for the next run. `shield: false` starts it without a shield. */
-  setup(seed: number, forcedPatterns?: number[], shield?: boolean): void;
-  /** Tiers of the first `n` patterns a real run with this seed would spawn. */
-  ramp(seed: number, n: number): number[];
+  /** Fix the seed and pin the first gates for the next run. `shield: false` starts it without a shield. */
+  setup(seed: number, forcedGates?: GateSpec[], shield?: boolean): void;
+  /** The first n gate specs a seed would generate. */
+  preview(seed: number, n: number): GateSpec[];
   /** Milliseconds of update + render work per frame, oldest first (last 600 frames). */
   frameWork(): number[];
   resetFrameWork(): void;
@@ -85,7 +89,7 @@ export function installDebugHook(game: Game): void {
       return { values: { ...TUNE }, reaches: game.world.magnets.map((m) => m.reach), clashes: zoneClashes(game.world.magnets).length, paused: isPanelOpen() };
     },
     snapshot() {
-      const p = game.world.patternAt(game.orb.y);
+      const g = game.world.gateAt(game.orb.y);
       return {
         state: game.state,
         x: game.orb.x,
@@ -98,29 +102,26 @@ export function installDebugHook(game: Game): void {
         best: game.best,
         camY: game.camY,
         launches: game.launches,
-        pattern: p ? p.index : null,
-        patternTop: p ? p.top : null,
+        gate: g ? g.index : null,
+        family: g ? g.spec.family : null,
+        tier: g ? g.spec.tier : null,
+        gateTop: g ? g.top : null,
+        passY: g ? g.passY : null,
         magnets: game.world.magnets.length,
         spikes: game.world.spikes.length,
         shield: game.shield,
         grace: game.grace,
         shieldsUsed: game.shieldsUsed,
-        patternsPassed: game.patternsPassed,
       };
     },
-    setup(seed, forcedPatterns = [], shield = true) {
+    setup(seed, forcedGates = [], shield = true) {
       game.seedOverride = seed;
-      game.forcedPatterns = forcedPatterns;
+      game.forcedGates = forcedGates;
       game.startShield = shield;
     },
-    ramp(seed, n) {
-      const w = new World(seed);
-      const tiers = new Map<number, number>();
-      for (let y = 0; tiers.size < n; y += 100) {
-        w.update(y);
-        for (const p of w.placed) tiers.set(p.top, p.tier);
-      }
-      return [...tiers.values()].slice(0, n);
+    preview(seed, n) {
+      const s = new GateStream(seed);
+      return Array.from({ length: n }, () => s.next());
     },
     frameWork() {
       return [...work];

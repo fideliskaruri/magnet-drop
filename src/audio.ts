@@ -387,6 +387,14 @@ export class SoundEngine {
     for (let k = 0; k < 3; k++) this.tone(v, 'triangle', noteHz(5 + k * 2), noteHz(5 + k * 2), 0.16, 0.14, k * 0.055);
   }
 
+  /** Dropping through a gate: a short bright two-note blip. */
+  gate(pan: number): void {
+    const v = this.begin('gate', 0.05, pan);
+    if (!v) return;
+    this.tone(v, 'sine', noteHz(12), noteHz(12), 0.12, 0.08);
+    this.tone(v, 'sine', noteHz(14), noteHz(14), 0.16, 0.07, 0.05);
+  }
+
   /** Every AUDIO.milestoneEvery points: a bell arpeggio that climbs with each milestone. */
   milestone(n: number): void {
     const v = this.begin('milestone', 0.3, 0);
@@ -542,7 +550,7 @@ export function haptic(pattern: number | number[]): void {
 
 // ---------- offline rendering (used by verify) ----------
 
-export const SOUND_NAMES = ['flip-blue', 'flip-red', 'flip-combo', 'stick', 'bounce', 'wall', 'launch', 'launch-chain', 'death-spikes', 'death-stall', 'start', 'milestone', 'best', 'near-miss', 'shield-break', 'shield-ready', 'layer-hum', 'layer-repel', 'layer-stuck', 'layer-wind', 'layer-danger', 'everything'] as const;
+export const SOUND_NAMES = ['flip-blue', 'flip-red', 'flip-combo', 'stick', 'bounce', 'wall', 'launch', 'launch-chain', 'death-spikes', 'death-stall', 'start', 'gate', 'milestone', 'best', 'near-miss', 'shield-break', 'shield-ready', 'layer-hum', 'layer-repel', 'layer-stuck', 'layer-wind', 'layer-danger', 'everything'] as const;
 export type SoundName = (typeof SOUND_NAMES)[number];
 
 function trigger(e: SoundEngine, name: SoundName): void {
@@ -559,6 +567,7 @@ function trigger(e: SoundEngine, name: SoundName): void {
     case 'death-spikes': return e.death('spikes');
     case 'death-stall': return e.death('stall');
     case 'start': return e.start();
+    case 'gate': return e.gate(0);
     case 'milestone': return e.milestone(3);
     case 'best': return e.best();
     case 'near-miss': return e.nearMiss(0);

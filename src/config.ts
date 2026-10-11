@@ -13,15 +13,10 @@ export const ORB_RADIUS = 11;
 export const SPIKE_FORGIVENESS = 4;
 
 // Shield: absorbs one spike hit. Every run starts with one and it comes back after clearing
-// TUNE.shieldRecharge patterns.
+// TUNE.shieldRecharge gates.
 export const SHIELD_HOP = 220;
 export const SHIELD_GRACE = 1;
 export const SHIELD_HITSTOP = 0.12;
-
-// Difficulty ramp: patterns of tier t only appear once this many patterns have spawned.
-export const TIER_UNLOCK = [0, 8, 14];
-// After a tier 2 pattern, the next one is always a breather from tier 0.
-export const BREATHER_AFTER_TIER = 2;
 
 // The top edge glows red once the orb is this close to being caught by the camera.
 export const STALL_WARN = 0.16;
@@ -29,16 +24,24 @@ export const STALL_WARN = 0.16;
 export const CAMERA_ANCHOR = 0.35;
 export const CAMERA_MIN_SPEED_DELAY = 2;
 
-export const PATTERN_GAP = 120;
+// Endless gates. Each gate is one barrier of spikes with a single gap, plus the magnets that get you there.
+// Difficulty only moves through these discrete tiers so `pnpm sim` can prove every gate the generator can make.
+/** First gate index (0-based) of each tier. */
+export const TIER_STARTS = [0, 6, 16, 30] as const;
+/** Width of the gap in the spike barrier, per tier. */
+export const GAP_WIDTHS = [150, 124, 104, 88] as const;
+/** Empty space between one gate's bottom and the next gate's top, per tier. */
+export const GATE_SPACING = [230, 210, 195, 180] as const;
+/** Where the first gate starts below the orb's spawn point. */
+export const FIRST_GATE_TOP = 240;
 
 export const DEATH_FREEZE = 0.06;
 export const RESTART_LOCK = 0.6;
 export const AUTO_READY = 1.5;
 
 export const TRAIL_LENGTH = 26;
-export const SCORE_DIVISOR = 10;
-export const BEST_KEY = 'magnetdrop.tuner.best';
-export const MUTED_KEY = 'magnetdrop.tuner.muted';
+export const BEST_KEY = 'magnetdrop.endless-tuner.best';
+export const MUTED_KEY = 'magnetdrop.endless-tuner.muted';
 
 // Visual feedback only. None of these touch physics.
 export const JUICE = {
@@ -58,11 +61,12 @@ export const JUICE = {
   flashMaxAlpha: 0.35,
   nearMissMargin: 10,
   nearMissCooldown: 0.5,
-  milestoneEvery: 100,
-  bigMilestoneEvery: 500,
+  /** Score is one point per gate. */
+  milestoneEvery: 10,
+  bigMilestoneEvery: 50,
   chainWindow: 2.2,
   /** Score at which depth heat maxes out. */
-  heatDepth: 1500,
+  heatDepth: 40,
   bpmMin: 96,
   bpmMax: 160,
   particleCap: 420,
@@ -93,7 +97,7 @@ export const AUDIO = {
   launchChainMax: 6,
   /** Impact speed (px/s) that plays a stick, bounce or wall hit at full force. */
   impactFull: 520,
-  milestoneEvery: 100,
+  milestoneEvery: 10,
   /** Spike danger starts this far (px, edge to edge) from a spike row. */
   spikeDangerRange: 50,
   /** Stall danger starts when the orb is this close (px) to the top of the screen. */
