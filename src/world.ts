@@ -1,4 +1,4 @@
-import { PATTERN_GAP, VIEW_H } from './config.ts';
+import { BREATHER_AFTER_TIER, PATTERN_GAP, TIER_UNLOCK, VIEW_H } from './config.ts';
 import { PATTERNS, TUTORIAL_COUNT } from './patterns.ts';
 import type { Magnet, PlacedPattern, SpikeRow } from './types.ts';
 
@@ -23,6 +23,7 @@ export class World {
   private count = 0;
   private last = -1;
   private nextTop = FIRST_TOP;
+  private readonly bottoms: number[] = [];
   private readonly forced: number[];
 
   /** `forced` pins the first pattern indices (used by tests and the simulator). */
@@ -50,11 +51,12 @@ export class World {
     const n = this.count++;
     if (n < this.forced.length) return this.forced[n]!;
     if (this.forced.length === 0 && n < TUTORIAL_COUNT) return n;
-    let i: number;
-    do {
-      i = TUTORIAL_COUNT + Math.floor(this.rand() * (PATTERNS.length - TUTORIAL_COUNT));
-    } while (i === this.last);
-    return i;
+    const lastTier = this.last >= 0 ? PATTERNS[this.last]!.tier : 0;
+    const maxTier = lastTier >= BREATHER_AFTER_TIER ? 0 : TIER_UNLOCK.filter((u) => n >= u).length - 1;
+    // Pattern 0 is the bare opening drop; it never comes back.
+    const pool: number[] = [];
+    for (let i = 1; i < PATTERNS.length; i++) if (i !== this.last && PATTERNS[i]!.tier <= maxTier) pool.push(i);
+    return pool[Math.floor(this.rand() * pool.length)]!;
   }
 
   private spawn(): void {
@@ -62,8 +64,10 @@ export class World {
     this.last = index;
     const p = PATTERNS[index]!;
     const top = this.nextTop;
+    this.bottoms.push(top + p.height);
     this.placed.push({
       index,
+      tier: p.tier,
       top,
       height: p.height,
       magnets: p.magnets.map((m) =>
@@ -76,5 +80,15 @@ export class World {
 
   patternAt(y: number): PlacedPattern | undefined {
     return this.placed.find((p) => y >= p.top && y < p.top + p.height + PATTERN_GAP);
+  }
+
+  /** How many patterns have newly been cleared now that the orb is at `y`. */
+  passed(y: number): number {
+    let n = 0;
+    while (this.bottoms.length && y > this.bottoms[0]!) {
+      this.bottoms.shift();
+      n++;
+    }
+    return n;
   }
 }

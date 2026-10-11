@@ -13,13 +13,19 @@ import {
   RESTART_LOCK,
   MAX_SPEED,
   SCORE_DIVISOR,
+  SHIELD_GRACE,
+  SHIELD_HITSTOP,
+  SHIELD_HOP,
+  SHIELD_RECHARGE_PATTERNS,
   VIEW_H,
   VIEW_W,
 } from './config.ts';
-import { Fx } from './fx.ts';
-import { attracts, closestPoint, fieldU, flip, hitsSpikes, step } from './physics.ts';
+import { Fx, P_SPARK } from './fx.ts';
+import { attracts, closestPoint, fieldU, flip, hitsSpikes, step, touchingSpikes } from './physics.ts';
 import type { GameStateName, Orb, SpikeRow } from './types.ts';
 import { World } from './world.ts';
+
+const NO_SPIKES: readonly SpikeRow[] = [];
 
 /** Edge-to-edge gap between the orb and a spike row's bounding box. */
 function spikeGap(row: SpikeRow, x: number, y: number): number {
@@ -59,6 +65,13 @@ export class Game {
   /** Dev hook: fire every effect continuously to measure the frame budget. */
   stress = false;
   deathCause: DeathCause = 'spikes';
+  shield = true;
+  /** Seconds left of passing harmlessly through spikes after the shield breaks. */
+  grace = 0;
+  shieldsUsed = 0;
+  patternsPassed = 0;
+  private sinceShield = 0;
+  startShield = true;
   /** Set by the dev hook to make runs reproducible. */
   seedOverride: number | null = null;
   forcedPatterns: number[] = [];
@@ -123,6 +136,11 @@ export class Game {
     this.passedBest = false;
     this.nearArmed = false;
     this.deathCause = 'spikes';
+    this.shield = this.startShield;
+    this.grace = 0;
+    this.shieldsUsed = 0;
+    this.patternsPassed = 0;
+    this.sinceShield = 0;
     this.setState('playing');
     this.fx.onStart(this.orb.x, this.orb.y, this.color());
     sound()?.start();
@@ -194,9 +212,18 @@ export class Game {
     const preSpeed = Math.hypot(this.orb.vx, this.orb.vy);
     const preVx = this.orb.vx;
     const preVy = this.orb.vy;
-    const ev = step(this.orb, this.world.magnets, this.world.spikes, dt);
+    if (this.grace > 0) {
+      this.grace -= dt;
+      // Never let the grace run out while the orb is still inside a spike row.
+      if (this.grace <= 0 && touchingSpikes(this.orb, this.world.spikes)) this.grace = dt;
+    }
+    const ev = step(this.orb, this.world.magnets, this.grace > 0 ? NO_SPIKES : this.world.spikes, dt);
     if (ev === 'dead') {
-      this.die('spikes', this.findHitRow());
+      if (!this.shield) {
+        this.die('spikes', this.findHitRow());
+        return;
+      }
+      this.breakShield();
       return;
     }
     const o = this.orb;
@@ -228,6 +255,17 @@ export class Game {
       return;
     }
     this.world.update(this.camY);
+    const passed = this.world.passed(o.y);
+    this.patternsPassed += passed;
+    if (!this.shield && passed > 0) {
+      this.sinceShield += passed;
+      if (this.sinceShield >= SHIELD_RECHARGE_PATTERNS) {
+        this.shield = true;
+        this.fx.popup('SHIELD READY', o.x, o.y - 34, COLORS.text, 16, 0.9);
+        this.fx.pulse(o.x, o.y, COLORS.text, 60, 0.35, 3);
+        sound()?.shieldReady();
+      }
+    }
     this.score = Math.max(this.score, Math.floor(o.y / SCORE_DIVISOR));
     if (this.score >= this.nextMilestone) {
       const m = this.nextMilestone;
@@ -236,6 +274,29 @@ export class Game {
     }
     this.scoreSounds();
     this.nearMissCheck();
+  }
+
+  /** A spike hit with the shield up: pop it, hop the orb and let it pass through spikes for a moment. */
+  private breakShield(): void {
+    const o = this.orb;
+    o.stuck = null;
+    o.x = o.prevX;
+    o.y = o.prevY;
+    o.vx *= 0.5;
+    o.vy = -SHIELD_HOP;
+    this.shield = false;
+    this.sinceShield = 0;
+    this.shieldsUsed++;
+    this.grace = SHIELD_GRACE;
+    this.hitstop = SHIELD_HITSTOP;
+    this.fx.popup('SHIELD SAVED YOU', o.x, o.y - 34, COLORS.text, 18, 1.1);
+    this.fx.pulse(o.x, o.y, COLORS.white, 90, 0.4, 6);
+    this.fx.pulse(o.x, o.y, COLORS.text, 160, 0.6, 3, 20, 0.06);
+    this.fx.spray(o.x, o.y, -Math.PI / 2, Math.PI, 22, 160, 420, COLORS.text, P_SPARK, 0.4, 2);
+    this.fx.addTrauma(0.5);
+    this.fx.bigFlash(COLORS.white, 0.5);
+    sound()?.shieldBreak(this.pan());
+    haptic([15, 30, 15]);
   }
 
   private updateHeat(dt: number): void {

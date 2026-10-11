@@ -189,7 +189,9 @@ export class Renderer {
       this.effects(fx);
       if (!(g.state === 'dying' && g.exploded)) {
         this.speedLines(fx, ox, oy, colorOf(g.orb.polarity));
-        this.orb(ox, oy, g.orb.polarity, g.orb.stuck !== null, time, fx, g.orb.vx, g.orb.vy, heat);
+        const blink = g.grace > 0 && Math.floor(time * 16) % 2 === 0;
+        if (!blink) this.orb(ox, oy, g.orb.polarity, g.orb.stuck !== null, time, fx, g.orb.vx, g.orb.vy, heat);
+        if (g.state === 'playing' && g.shield) this.shieldRing(ox, oy, time);
       }
       this.popups(fx);
       ctx.restore();
@@ -815,6 +817,7 @@ export class Renderer {
     ctx.font = '900 32px system-ui, sans-serif';
     this.splitText(g.score.toLocaleString('en-US'), 0, 0, 1 + pop * 4 + heat * 1.5, COLORS.text);
     ctx.restore();
+    if (g.state === 'playing') this.shieldIcon(24, 40, g.shield);
 
     if (g.state === 'dying' && g.stateTime > 0.6) {
       const t = Math.min(1, (g.stateTime - 0.6) / 0.15);
@@ -835,6 +838,36 @@ export class Renderer {
     }
   }
 
+  private shieldRing(x: number, y: number, time: number): void {
+    const { ctx } = this;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(232,238,252,0.75)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 4]);
+    ctx.lineDashOffset = -time * 20;
+    ctx.beginPath();
+    ctx.arc(x, y, ORB_RADIUS + 6, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  private shieldIcon(x: number, y: number, ready: boolean): void {
+    const { ctx } = this;
+    ctx.save();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = ready ? COLORS.text : COLORS.chrome;
+    ctx.fillStyle = ready ? 'rgba(232,238,252,0.18)' : 'rgba(0,0,0,0)';
+    ctx.beginPath();
+    ctx.moveTo(x, y - 10);
+    ctx.lineTo(x + 9, y - 6);
+    ctx.quadraticCurveTo(x + 8, y + 6, x, y + 11);
+    ctx.quadraticCurveTo(x - 8, y + 6, x - 9, y - 6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
   private menu(g: Game, time: number): void {
     const { ctx } = this;
     const fx = g.fx;
@@ -849,6 +882,9 @@ export class Renderer {
     this.splitText('MAGNET', 0, -24, 2.5, COLORS.text);
     this.splitText('DROP', 0, 24, 2.5, COLORS.text);
     ctx.restore();
+    ctx.fillStyle = COLORS.spike;
+    ctx.font = '800 12px system-ui, sans-serif';
+    ctx.fillText('TUNER', VIEW_W / 2, 230);
     ctx.fillStyle = COLORS.dim;
     ctx.font = '700 13px system-ui, sans-serif';
     ctx.fillText('BEST', VIEW_W / 2, 262);
@@ -865,6 +901,8 @@ export class Renderer {
     ctx.fillStyle = COLORS.dim;
     ctx.font = '600 12px system-ui, sans-serif';
     ctx.fillText('Tap to flip polarity. Opposites attract.', VIEW_W / 2, 560);
+    ctx.fillText('Your shield blocks one spike hit and comes back.', VIEW_W / 2, 580);
+    ctx.fillText('Press T or the gear to tune the physics.', VIEW_W / 2, 600);
     ctx.restore();
   }
 }

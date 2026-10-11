@@ -136,6 +136,11 @@ export function step(orb: Orb, magnets: readonly Magnet[], spikes: readonly Spik
   return event;
 }
 
+/** Whether the orb overlaps any spike row, using the same forgiving hitbox as `step`. */
+export function touchingSpikes(orb: Orb, spikes: readonly SpikeRow[]): boolean {
+  return spikes.some((row) => hitsSpikes(row, orb.x, orb.y, ORB_RADIUS - SPIKE_FORGIVENESS));
+}
+
 /** Held against an attracting magnet: slide along its surface under gravity. */
 function stepStuck(orb: Orb, dt: number): void {
   const s = orb.stuck!;

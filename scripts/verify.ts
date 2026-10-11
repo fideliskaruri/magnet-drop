@@ -38,10 +38,10 @@ async function waitFor(page: Page, pred: (s: Snap) => boolean, timeoutMs: number
 }
 
 /** Back to the ready screen, then start a run on the given patterns. */
-async function startRun(page: Page, patterns: number[], seed = 1): Promise<void> {
+async function startRun(page: Page, patterns: number[], seed = 1, shield = true): Promise<void> {
   await page.reload();
   await page.waitForFunction(() => window.__md !== undefined);
-  await page.evaluate(([s, p]) => window.__md!.setup(s as number, p as number[]), [seed, patterns] as const);
+  await page.evaluate(([s, p, sh]) => window.__md!.setup(s as number, p as number[], sh as boolean), [seed, patterns, shield] as const);
   await tap(page);
   await waitFor(page, (s) => s.state === 'playing', 1000);
 }
@@ -152,9 +152,38 @@ try {
   check('stuck-sound', stuckMix.stuck === 1 && stuckMix.attract === 0, `stuck layer=${stuckMix.stuck} hum=${stuckMix.attract}`);
   check('stick-and-launch', stuck !== null && afterLaunch.launches === 1 && !afterLaunch.stuck && speed >= 550, `stuck=${stuck !== null} launches=${afterLaunch.launches} speed=${speed.toFixed(0)}`);
 
-  // 5. Death and fast restart on pattern 2 without flipping (blue magnet pushes the orb onto the shelf).
+  // 5a. The shield: same fall onto pattern 2's shelf, but the shield absorbs the hit and the run goes on.
+  await startRun(page, [1, 9, 9, 9, 9, 9, 9, 9]);
+  s = await snap(page);
+  const shieldAtStart = s.shield;
+  const saved = await waitFor(page, (x) => x.shieldsUsed === 1, 5000);
+  await sleep(120);
+  await shot(page, '05a-shield-saved');
+  const afterSave = await waitFor(page, (x) => x.grace <= 0 && x.patternsPassed >= 1, 4000);
+  check(
+    'shield-saves-once',
+    shieldAtStart && saved !== null && saved.state === 'playing' && !saved.shield && afterSave !== null && afterSave.state === 'playing',
+    `shield at start=${shieldAtStart} used=${saved?.shieldsUsed} state after hit=${saved?.state} still playing past the spikes=${afterSave?.state === 'playing'}`,
+  );
+
+  // 5b. The shield comes back after clearing a few more patterns (Rest patterns, tapping to stay off the magnet).
+  let back5: Snap | null = null;
+  const until = Date.now() + 25000;
+  while (Date.now() < until) {
+    const x = await snap(page);
+    if (x.state !== 'playing' || x.shield) {
+      back5 = x;
+      break;
+    }
+    if (x.stuck) await tap(page);
+    await sleep(60);
+  }
+  await shot(page, '05b-shield-ready');
+  check('shield-recharges', back5 !== null && back5.state === 'playing' && back5.shield, `state=${back5?.state} shield=${back5?.shield} patterns passed=${back5?.patternsPassed}`);
+
+  // 5c. Death and fast restart on pattern 2 without flipping and without a shield.
   await page.evaluate(() => localStorage.clear());
-  await startRun(page, [1]);
+  await startRun(page, [1], 1, false);
   const dead = await waitFor(page, (x) => x.state === 'dying', 5000);
   const deathScore = dead?.score ?? 0;
   await sleep(200);
@@ -169,7 +198,8 @@ try {
   await page.reload();
   await page.waitForFunction(() => window.__md !== undefined);
   const best = (await snap(page)).best;
-  check('best-persists', best === deathScore && best > 0, `best after reload=${best}`);
+  const keys = await page.evaluate(() => Object.keys(localStorage));
+  check('best-persists', best === deathScore && best > 0 && keys.includes('magnetdrop.tuner.best'), `best after reload=${best} keys=${keys.join(',')}`);
 
   // 6. Stall pressure: hang on the Rest magnet and get scrolled off the top.
   await startRun(page, [9]);
@@ -197,6 +227,21 @@ try {
     await shot(page, `07-pattern-${String(i + 1).padStart(2, '0')}`);
   }
   check('pattern-screens', true, `saved to ${OUT}`);
+
+  // 7b. Difficulty ramp: the first patterns after the tutorial are easy, hard ones come later and are followed by a breather.
+  const rampIssues: string[] = [];
+  let hardSeen = 0;
+  for (let seed = 1; seed <= 30; seed++) {
+    const tiers = await page.evaluate((sd) => window.__md!.ramp(sd, 40), seed);
+    if (tiers.slice(0, 8).some((t) => t > 0)) rampIssues.push(`seed ${seed}: early ${tiers.slice(0, 8).join('')}`);
+    if (tiers.slice(0, 14).some((t) => t > 1)) rampIssues.push(`seed ${seed}: hard too soon`);
+    tiers.forEach((t, i) => {
+      if (t === 2 && i + 1 < tiers.length && tiers[i + 1] !== 0) rampIssues.push(`seed ${seed}: no breather at ${i}`);
+    });
+    hardSeen += tiers.filter((t) => t === 2).length;
+  }
+  if (hardSeen === 0) rampIssues.push('hard patterns never appear');
+  check('difficulty-ramp', rampIssues.length === 0, rampIssues.slice(0, 3).join(' | ') || `30 seeds: first 8 patterns easy, a breather after each of the ${hardSeen} hard ones`);
 
   // 8. Long session: mash taps for 20 s, auto-restarting. Object counts must stay bounded and per-frame work small.
   // (Headless Edge caps rAF at 30 fps, so we measure update + render work time, not frame intervals.)

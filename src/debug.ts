@@ -1,5 +1,6 @@
 import { audioStats, renderOffline, SOUND_NAMES, type AudioStats, type RenderResult, type SoundName } from './audio.ts';
 import type { Game } from './game.ts';
+import { World } from './world.ts';
 
 export interface DebugHook {
   snapshot(): {
@@ -18,9 +19,15 @@ export interface DebugHook {
     patternTop: number | null;
     magnets: number;
     spikes: number;
+    shield: boolean;
+    grace: number;
+    shieldsUsed: number;
+    patternsPassed: number;
   };
-  /** Fix the seed and the first pattern indices (0-based) for the next run. */
-  setup(seed: number, forcedPatterns?: number[]): void;
+  /** Fix the seed and the first pattern indices (0-based) for the next run. `shield: false` starts it without a shield. */
+  setup(seed: number, forcedPatterns?: number[], shield?: boolean): void;
+  /** Tiers of the first `n` patterns a real run with this seed would spawn. */
+  ramp(seed: number, n: number): number[];
   /** Milliseconds of update + render work per frame, oldest first (last 600 frames). */
   frameWork(): number[];
   resetFrameWork(): void;
@@ -87,11 +94,25 @@ export function installDebugHook(game: Game): void {
         patternTop: p ? p.top : null,
         magnets: game.world.magnets.length,
         spikes: game.world.spikes.length,
+        shield: game.shield,
+        grace: game.grace,
+        shieldsUsed: game.shieldsUsed,
+        patternsPassed: game.patternsPassed,
       };
     },
-    setup(seed, forcedPatterns = []) {
+    setup(seed, forcedPatterns = [], shield = true) {
       game.seedOverride = seed;
       game.forcedPatterns = forcedPatterns;
+      game.startShield = shield;
+    },
+    ramp(seed, n) {
+      const w = new World(seed);
+      const tiers = new Map<number, number>();
+      for (let y = 0; tiers.size < n; y += 100) {
+        w.update(y);
+        for (const p of w.placed) tiers.set(p.top, p.tier);
+      }
+      return [...tiers.values()].slice(0, n);
     },
     frameWork() {
       return [...work];
