@@ -7,15 +7,16 @@ import {
   CAMERA_MIN_SPEED_DELAY,
   COLORS,
   DEATH_FREEZE,
+  MILESTONE,
   ORB_RADIUS,
   RESTART_LOCK,
-  SCORE_DIVISOR,
+  SCORE_POP,
   VIEW_H,
   VIEW_W,
 } from './config.ts';
 import { Fx } from './fx.ts';
 import { flip, step } from './physics.ts';
-import type { GameStateName, Orb } from './types.ts';
+import type { GameStateName, GateSpec, Orb } from './types.ts';
 import { World } from './world.ts';
 
 const LAUNCH_HITSTOP = 0.035;
@@ -42,9 +43,11 @@ export class Game {
   hitstop = 0;
   exploded = false;
   launches = 0;
+  /** Counts down after each cleared gate; drives the score pop. */
+  scorePop = 0;
   /** Set by the dev hook to make runs reproducible. */
   seedOverride: number | null = null;
-  forcedPatterns: number[] = [];
+  forcedGates: GateSpec[] = [];
   private taps = 0;
   private trailTick = 0;
 
@@ -60,12 +63,13 @@ export class Game {
 
   private startRun(): void {
     const seed = this.seedOverride ?? Math.floor(Math.random() * 2 ** 31);
-    this.world = new World(seed, this.forcedPatterns);
+    this.world = new World(seed, this.forcedGates);
     this.orb = Game.freshOrb();
     this.camY = this.prevCamY = this.orb.y - VIEW_H * CAMERA_ANCHOR;
     this.world.update(this.camY);
     this.fx.reset();
     this.score = 0;
+    this.scorePop = 0;
     this.runTime = 0;
     this.hitstop = 0;
     this.launches = 0;
@@ -124,6 +128,7 @@ export class Game {
     // playing
     for (let i = 0; i < taps; i++) this.doFlip();
     this.fx.update(dt);
+    this.scorePop = Math.max(0, this.scorePop - dt);
     if (this.hitstop > 0) {
       this.hitstop -= dt;
       this.orb.prevX = this.orb.x;
@@ -152,8 +157,21 @@ export class Game {
       this.die();
       return;
     }
+    // One point per barrier cleared. Check before culling so the gate is still there.
+    for (let g = this.world.gate(this.score); g && this.orb.y > g.passY; g = this.world.gate(this.score)) this.clearGate();
     this.world.update(this.camY);
-    this.score = Math.max(this.score, Math.floor(this.orb.y / SCORE_DIVISOR));
+  }
+
+  private clearGate(): void {
+    this.score++;
+    this.scorePop = SCORE_POP;
+    const milestone = this.score % MILESTONE === 0;
+    sfx.score(milestone);
+    if (milestone) {
+      this.fx.flash = 0.12;
+      this.fx.pulse(this.orb.x, this.orb.y, COLORS.text, 70, 0.3, 3);
+      haptic(15);
+    }
   }
 
   private doFlip(): void {

@@ -60,6 +60,10 @@ export const sfx = {
     tone('sawtooth', 180, 50, 0.22, 0.12);
     noise(0.15, 0.12, 2400);
   },
+  score(milestone: boolean): void {
+    tone('sine', 880, 1320, 0.09, 0.06);
+    if (milestone) tone('triangle', 660, 1760, 0.3, 0.08);
+  },
   death(): void {
     noise(0.45, 0.3, 4000);
     tone('triangle', 300, 40, 0.4, 0.12);

@@ -26,15 +26,27 @@ export const CAMERA_ANCHOR = 0.35;
 export const CAMERA_MIN_SPEED = 60;
 export const CAMERA_MIN_SPEED_DELAY = 2;
 
-export const PATTERN_GAP = 120;
+// Endless gates. Each gate is one barrier of spikes with a single gap, plus the magnets that get you there.
+// Difficulty only moves through these discrete tiers so `pnpm sim` can prove every gate the generator can make.
+/** First gate index (0-based) of each tier. */
+export const TIER_STARTS = [0, 6, 16, 30] as const;
+/** Width of the gap in the spike barrier, per tier. */
+export const GAP_WIDTHS = [150, 124, 104, 88] as const;
+/** Empty space between one gate's bottom and the next gate's top, per tier. */
+export const GATE_SPACING = [150, 130, 115, 100] as const;
+/** Where the first gate starts below the orb's spawn point. */
+export const FIRST_GATE_TOP = 240;
 
 export const DEATH_FREEZE = 0.06;
 export const RESTART_LOCK = 0.6;
 export const AUTO_READY = 1.5;
 
 export const TRAIL_LENGTH = 20;
-export const SCORE_DIVISOR = 10;
-export const BEST_KEY = 'magnetdrop.best';
+export const BEST_KEY = 'magnetdrop.endless.best';
+/** Seconds the score number pops after you clear a gate. */
+export const SCORE_POP = 0.25;
+/** Every this many gates the score chimes and flashes. */
+export const MILESTONE = 10;
 
 export const COLORS = {
   bg: '#070b18',

@@ -10,7 +10,8 @@
   - `pnpm verify`: real headless Edge play-throughs with screenshots.
 - Browser checks always run headless.
 - Keep `src/physics.ts` pure, with no DOM access. Both the game and `scripts/sim.ts` depend on it.
-- After changing physics or patterns, run `pnpm sim`. Every pattern must stay solvable from every start.
+- After changing physics, `src/gates.ts` or gate tuning in `src/config.ts`, run `pnpm sim`. Every catalogue entry and every seeded run must clear, or it exits non-zero.
+- Keep `src/gates.ts` pure and its choices discrete, so `catalogue()` can enumerate every gate the game can produce.
 - Tuning lives in `src/config.ts`. Don't scatter magic numbers.
 - `window.__md` is dev-only (`import.meta.env.DEV`). Keep it out of production bundles.
 

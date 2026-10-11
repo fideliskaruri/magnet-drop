@@ -35,12 +35,29 @@ export interface Pattern {
   height: number;
   magnets: Magnet[];
   spikes: SpikeRow[];
+  /** Pattern-local y of the barrier's bottom edge. Passing below it scores the gate. */
+  passY: number;
 }
 
-export interface PlacedPattern {
+export type Family = 'drift' | 'twin' | 'perch' | 'rail' | 'slope' | 'corridor';
+
+/** Everything that decides a gate. All choices are discrete so the simulator can enumerate them. */
+export interface GateSpec {
+  family: Family;
+  tier: number;
+  /** Family-specific choice indices. */
+  v: number[];
+  mirror: boolean;
+  /** Swap every magnet's colour. */
+  swap: boolean;
+}
+
+export interface PlacedGate {
   index: number;
+  spec: GateSpec;
   top: number;
   height: number;
+  passY: number;
   magnets: Magnet[];
   spikes: SpikeRow[];
 }

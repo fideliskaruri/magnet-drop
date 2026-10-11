@@ -1,4 +1,6 @@
+import { GateStream } from './gates.ts';
 import type { Game } from './game.ts';
+import type { GateSpec } from './types.ts';
 
 export interface DebugHook {
   snapshot(): {
@@ -13,13 +15,20 @@ export interface DebugHook {
     best: number;
     camY: number;
     launches: number;
-    pattern: number | null;
-    patternTop: number | null;
+    /** Gate the orb is in (index, family, tier, top and pass line). */
+    gate: number | null;
+    family: string | null;
+    tier: number | null;
+    gateTop: number | null;
+    passY: number | null;
+    scorePop: number;
     magnets: number;
     spikes: number;
   };
-  /** Fix the seed and the first pattern indices (0-based) for the next run. */
-  setup(seed: number, forcedPatterns?: number[]): void;
+  /** Fix the seed and pin the first gates for the next run. */
+  setup(seed: number, forcedGates?: GateSpec[]): void;
+  /** The first n gate specs a seed would generate. */
+  preview(seed: number, n: number): GateSpec[];
   /** Milliseconds of update + render work per frame, oldest first (last 600 frames). */
   frameWork(): number[];
 }
@@ -41,7 +50,7 @@ export function recordFrameWork(ms: number): void {
 export function installDebugHook(game: Game): void {
   window.__md = {
     snapshot() {
-      const p = game.world.patternAt(game.orb.y);
+      const g = game.world.gateAt(game.orb.y);
       return {
         state: game.state,
         x: game.orb.x,
@@ -54,15 +63,23 @@ export function installDebugHook(game: Game): void {
         best: game.best,
         camY: game.camY,
         launches: game.launches,
-        pattern: p ? p.index : null,
-        patternTop: p ? p.top : null,
+        gate: g ? g.index : null,
+        family: g ? g.spec.family : null,
+        tier: g ? g.spec.tier : null,
+        gateTop: g ? g.top : null,
+        passY: g ? g.passY : null,
+        scorePop: game.scorePop,
         magnets: game.world.magnets.length,
         spikes: game.world.spikes.length,
       };
     },
-    setup(seed, forcedPatterns = []) {
+    setup(seed, forcedGates = []) {
       game.seedOverride = seed;
-      game.forcedPatterns = forcedPatterns;
+      game.forcedGates = forcedGates;
+    },
+    preview(seed, n) {
+      const s = new GateStream(seed);
+      return Array.from({ length: n }, () => s.next());
     },
     frameWork() {
       return [...work];

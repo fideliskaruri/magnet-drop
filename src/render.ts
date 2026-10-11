@@ -1,4 +1,4 @@
-import { COLORS, ORB_RADIUS, RAIL_FIELD, VIEW_H, VIEW_W } from './config.ts';
+import { COLORS, ORB_RADIUS, RAIL_FIELD, SCORE_POP, VIEW_H, VIEW_W } from './config.ts';
 import type { Game } from './game.ts';
 import { attracts, closestPoint, fieldU, spikeTriangles } from './physics.ts';
 import type { Magnet, Polarity, SpikeRow } from './types.ts';
@@ -310,16 +310,22 @@ export class Renderer {
     const { ctx } = this;
     ctx.save();
     ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
+    ctx.textBaseline = 'middle';
     ctx.fillStyle = COLORS.text;
     ctx.shadowColor = 'rgba(0,0,0,0.6)';
     ctx.shadowBlur = 6;
-    ctx.font = '800 30px system-ui, sans-serif';
-    ctx.fillText(g.score.toLocaleString('en-US'), VIEW_W / 2, 22);
+    const pop = g.scorePop / SCORE_POP;
+    const size = Math.round(44 * (1 + 0.35 * pop * pop));
+    ctx.font = `900 ${size}px system-ui, sans-serif`;
+    ctx.fillText(g.score.toLocaleString('en-US'), VIEW_W / 2, 52);
     if (g.state === 'dying' && g.stateTime > 0.6) {
-      ctx.font = '700 14px system-ui, sans-serif';
+      const best = g.score >= g.best && g.score > 0;
+      ctx.font = '800 15px system-ui, sans-serif';
+      ctx.fillStyle = best ? COLORS.spike : COLORS.dim;
+      ctx.fillText(best ? 'NEW BEST' : `BEST ${g.best.toLocaleString('en-US')}`, VIEW_W / 2, 92);
       ctx.fillStyle = COLORS.dim;
-      ctx.fillText(g.score >= g.best && g.score > 0 ? 'NEW BEST · TAP TO RETRY' : 'TAP TO RETRY', VIEW_W / 2, VIEW_H * 0.55);
+      ctx.font = '700 14px system-ui, sans-serif';
+      ctx.fillText('TAP TO RETRY', VIEW_W / 2, VIEW_H * 0.55);
     }
     ctx.restore();
   }
@@ -337,12 +343,15 @@ export class Renderer {
     ctx.shadowColor = COLORS.red;
     ctx.fillText('DROP', VIEW_W / 2, 194);
     ctx.shadowBlur = 0;
+    ctx.fillStyle = COLORS.spike;
+    ctx.font = '800 14px system-ui, sans-serif';
+    ctx.fillText('ENDLESS', VIEW_W / 2, 228);
     ctx.fillStyle = COLORS.dim;
     ctx.font = '700 13px system-ui, sans-serif';
-    ctx.fillText('BEST', VIEW_W / 2, 262);
+    ctx.fillText('BEST', VIEW_W / 2, 272);
     ctx.fillStyle = COLORS.text;
     ctx.font = '800 26px system-ui, sans-serif';
-    ctx.fillText(g.best.toLocaleString('en-US'), VIEW_W / 2, 290);
+    ctx.fillText(g.best.toLocaleString('en-US'), VIEW_W / 2, 300);
     const pol: Polarity = Math.floor(time * 1.25) % 2 === 0 ? 'blue' : 'red';
     this.orb(VIEW_W / 2, 400 + Math.sin(time * 3) * 6, pol, false, time);
     ctx.globalAlpha = 0.55 + 0.45 * Math.sin(time * 4);
@@ -353,6 +362,7 @@ export class Renderer {
     ctx.fillStyle = COLORS.dim;
     ctx.font = '600 12px system-ui, sans-serif';
     ctx.fillText('Tap to flip polarity. Opposites attract.', VIEW_W / 2, 560);
+    ctx.fillText('Drop through the gaps. Every gap is a point.', VIEW_W / 2, 580);
     ctx.restore();
   }
 }
