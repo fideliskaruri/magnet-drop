@@ -1,303 +1,277 @@
-// Fairness proof for the endless generator. Runs the real physics headless.
+// Fairness proof for the runner. Runs the real physics headless (src/physics.ts + src/gates.ts).
 //
-// 1. Catalogue: every gate the generator can produce, at every tier, from 18 entry points
-//    (9 x positions, both orb colours). Mirror and colour swap are covered because the entry set is
-//    mirror-symmetric and includes both colours. A beam search over flips (one choice every DECISION
-//    seconds) must clear each one.
-// 2. Runs: whole generated runs, gate after gate, starting like the game does, with the camera chasing
-//    you. The beam search must clear RUN_GATES gates in a row for every seed.
+// 1. Gates: every catalogue gate (every family and variant, at its lowest tier) from 7 entry heights x both
+//    polarities, at the slowest and fastest scroll speed, and for timed or moving gates at 4 clock phases.
+//    The orb starts only the tightest gate spacing ahead of the gate. A beam search over flips (one choice
+//    every DECISION seconds) must get it through without being pushed off the left edge or caught in machinery.
+// 2. Runs: whole seeded runs exactly as the game builds them (tutorial, then the stream, with the speed
+//    stepping up per tier). The beam search must clear RUN_GATES gates in a row for every seed.
 //
-// Zones are fitted the way the game fits them. In the catalogue each gate gets the smallest zones
-// any neighbouring gate above or below could squeeze it to, and no two zones may come closer than the gap.
-//
-// Usage: pnpm sim [all|gates|runs] [seedCount] [key=value ...]   (key=value overrides a tunable)
-import { CAMERA_ANCHOR, CAMERA_MIN_SPEED_DELAY, DT, FIRST_GATE_TOP, GATE_SPACING, ORB_RADIUS, TIER_STARTS, VIEW_H, VIEW_W } from '../src/config.ts';
-import { buildGate, catalogue, GateStream, placeGate } from '../src/gates.ts';
-import { flip, step } from '../src/physics.ts';
+// Time is the run clock, so moving machinery replays deterministically.
+// Usage: pnpm sim [all|gates|runs] [seedCount] [family=name] [key=value ...]   (key=value overrides a tunable)
+import { ANCHOR, CEIL, DT, FIRST_GATE_X, FLOOR, GATE_SPACING, MID, ORB_RADIUS, SPEED_EASE, TIER_SPEED, VIEW_W } from '../src/config.ts';
+import { buildGate, catalogue, cloneGate, GateStream, tierOf } from '../src/gates.ts';
+import { flip, makeOrb, step, type Sim } from '../src/physics.ts';
 import { TUNE } from '../src/tune.ts';
-import type { GateSpec, Magnet, Orb, Pattern, PlacedGate, Polarity, SpikeRow } from '../src/types.ts';
-import { fitZones, zoneClashes } from '../src/zones.ts';
+import type { Gate, GateSpec, Orb, Polarity } from '../src/types.ts';
+import { World } from '../src/world.ts';
 
 const DECISION = 0.1;
 const STEPS = Math.round(DECISION / DT);
-const BEAM = 4000;
-const MAX_T = 8;
-const RUN_BEAM = 1500;
-const RUN_GATES = 60;
+const BEAM = 160;
+// A case the narrow beam misses is retried wide before it counts as a failure.
+const WIDE_BEAM = 1500;
+const MAX_T = 9;
+const RUN_BEAM = 200;
+const RUN_GATES = 45;
+const R = ORB_RADIUS;
+const MIN_SPACING = Math.min(...GATE_SPACING);
+const PHASES = [0, 0.65, 1.3, 1.95];
+const ENTRY_Y = [CEIL + R, CEIL + 50, 110, MID, 250, FLOOR - 50, FLOOR - R];
 
-const clone = (o: Orb): Orb => ({ ...o, stuck: o.stuck ? { ...o.stuck } : null });
-const specName = (s: GateSpec): string => `${s.family}[${s.v.join(',')}]t${s.tier}${s.mirror ? 'm' : ''}${s.swap ? 's' : ''}`;
+const specName = (s: GateSpec): string => `${s.family}[${s.v.join(',')}]t${s.tier}`;
 
-function start(x0: number, pol: Polarity): Orb {
-  return { x: x0, y: -120, vx: 0, vy: TUNE.terminalFall * 0.8, prevX: x0, prevY: -120, polarity: pol, stuck: null };
-}
-
-interface Course {
-  magnets: Magnet[];
-  spikes: SpikeRow[];
-  clearY: number;
-}
-
-function advance(c: Course, orb: Orb, steps: number): 'dead' | 'clear' | 'ok' {
-  for (let i = 0; i < steps; i++) {
-    if (step(orb, c.magnets, c.spikes, DT) === 'dead') return 'dead';
-    if (orb.y > c.clearY) return 'clear';
-  }
-  return 'ok';
-}
-
-const keyOf = (o: Orb, extra = ''): string =>
-  `${Math.round(o.x / 3)},${Math.round(o.y / 3)},${Math.round(o.vx / 25)},${Math.round(o.vy / 25)},${o.polarity},${o.stuck ? 1 : 0}${extra}`;
-
-/** Minimum flips needed to clear, or -1 if no flip sequence works. */
-function solve(c: Course, x0: number, pol: Polarity): number {
-  let beam: { orb: Orb; flips: number }[] = [{ orb: start(x0, pol), flips: 0 }];
-  let best = -1;
-  for (let t = 0; t < MAX_T && beam.length; t += DECISION) {
-    const next = new Map<string, { orb: Orb; flips: number }>();
-    for (const s of beam) {
-      for (const doFlip of [false, true]) {
-        const o = clone(s.orb);
-        if (doFlip) flip(o);
-        const flips = s.flips + (doFlip ? 1 : 0);
-        const r = advance(c, o, STEPS);
-        if (r === 'dead') continue;
-        if (r === 'clear') {
-          if (best < 0 || flips < best) best = flips;
-          continue;
-        }
-        const key = keyOf(o);
-        const prev = next.get(key);
-        if (!prev || prev.flips > flips) next.set(key, { orb: o, flips });
-      }
-    }
-    beam = [...next.values()];
-    if (beam.length > BEAM) {
-      beam.sort((a, b) => b.orb.y - a.orb.y);
-      beam = beam.slice(0, BEAM);
-    }
-    if (best >= 0) break;
-  }
-  return best;
-}
-
-const variants = (s: GateSpec): GateSpec[] => [false, true].flatMap((mirror) => [false, true].map((swap) => ({ ...s, mirror, swap })));
-
-/** Gate geometry moved down by dy. */
-function shifted(p: Pattern, dy: number): Magnet[] {
-  return p.magnets.map((m): Magnet => (m.kind === 'point' ? { ...m, y: m.y + dy } : { ...m, ay: m.ay + dy, by: m.by + dy }));
-}
-
-/**
- * Fit each canonical gate against every gate that could sit above or below it, at the tightest spacing,
- * and keep the smallest reach each magnet ever gets. Returns the number of zone clashes found.
- */
-function fitCatalogue(specs: GateSpec[]): { built: Map<GateSpec, Pattern>; clashes: number } {
-  const all = specs.flatMap(variants).map((s) => buildGate(s));
-  const gap = Math.min(...GATE_SPACING);
-  const built = new Map<GateSpec, Pattern>();
-  let clashes = 0;
-  const sample: string[] = [];
-  for (const spec of specs) {
-    const mid = buildGate(spec);
-    fitZones([], mid.magnets);
-    const worst = mid.magnets.map((m) => m.reach);
-    for (const other of all) {
-      // Neighbour above: it was fitted first, then this gate is fitted against it.
-      const above = shifted(other, 0);
-      fitZones([], above);
-      const m1 = shifted(mid, other.height + gap);
-      fitZones(above, m1);
-      // Neighbour below: fitted against this gate, which can shrink this gate too.
-      const m2 = shifted(mid, 0);
-      fitZones([], m2);
-      const below = shifted(other, mid.height + gap);
-      fitZones(m2, below);
-      for (const [ms, pair] of [[m1, [...above, ...m1]], [m2, [...m2, ...below]]] as const) {
-        ms.forEach((m, k) => (worst[k] = Math.min(worst[k]!, m.reach)));
-        const c = zoneClashes(pair).length;
-        clashes += c;
-        if (c && sample.length < 5) sample.push(specName(spec));
-      }
-    }
-    mid.magnets.forEach((m, k) => (m.reach = worst[k]!));
-    built.set(spec, mid);
-  }
-  console.log(`Zones: gap ${TUNE.zoneGap}px, ${clashes ? `CLASHES in ${sample.join(', ')}` : 'no two zones closer than the gap with any neighbouring gate'}.`);
-  return { built, clashes };
-}
-
-function checkCatalogue(): number {
-  const { built, clashes } = fitCatalogue(catalogue());
-  // SIM_ONLY=drift,twin limits the solve to some families (zones are still fitted against all of them).
-  const only = process.env.SIM_ONLY?.split(',');
-  const specs = catalogue().filter((sp) => !only || only.includes(sp.family));
-  const starts = [20, 60, 100, 140, 180, 220, 260, 300, 340];
-  console.log(`Catalogue: ${specs.length} canonical gates (x4 with mirror and colour swap), ${starts.length * 2} entries each.`);
-  const rows = new Map<string, { gates: number; entries: number; idleFail: number; flips: number[]; unsolved: string[] }>();
-  let unsolvedTotal = 0;
-  const t0 = Date.now();
-  for (const spec of specs) {
-    const p = [...built].find(([k]) => specName(k) === specName(spec))![1];
-    const c: Course = { magnets: p.magnets, spikes: p.spikes, clearY: p.height + 20 };
-    const key = `${spec.family.padEnd(9)} tier ${spec.tier}`;
-    const row = rows.get(key) ?? { gates: 0, entries: 0, idleFail: 0, flips: [], unsolved: [] };
-    rows.set(key, row);
-    row.gates++;
-    for (const x0 of starts) {
-      for (const pol of ['red', 'blue'] as Polarity[]) {
-        row.entries++;
-        if (advance(c, start(x0, pol), Math.round(MAX_T / DT)) !== 'clear') row.idleFail++;
-        const f = solve(c, x0, pol);
-        if (f < 0) {
-          row.unsolved.push(`${specName(spec)}@${x0}${pol[0]}`);
-          unsolvedTotal++;
-        } else row.flips.push(f);
-      }
-    }
-  }
-  for (const [key, r] of [...rows].sort(([a], [b]) => a.localeCompare(b))) {
-    const avg = r.flips.length ? (r.flips.reduce((a, b) => a + b, 0) / r.flips.length).toFixed(1) : '-';
-    const idle = `${Math.round((100 * r.idleFail) / r.entries)}%`.padStart(4);
-    console.log(
-      `  ${key}  gates ${String(r.gates).padStart(2)}  solvable ${String(r.entries - r.unsolved.length).padStart(3)}/${r.entries}  idle-fail ${idle}  min flips avg ${avg}` +
-        (r.unsolved.length ? `\n    UNSOLVED: ${r.unsolved.join(' ')}` : ''),
-    );
-  }
-  const total = specs.length * starts.length * 2;
-  console.log(`Catalogue: ${total - unsolvedTotal}/${total} gate entries solvable in ${((Date.now() - t0) / 1000).toFixed(1)} s.\n`);
-  return unsolvedTotal + clashes;
-}
-
-interface RunState {
-  orb: Orb;
-  cam: number;
+interface Node {
+  sim: Sim;
   flips: number;
+  knocks: number;
+  cleared: number;
+  /** Next pristine gate to bring into play (runs). */
+  next: number;
 }
 
-/**
- * Keep the deepest states, but spread across x columns, colours and stuck/free, so a long run doesn't
- * collapse onto one line that a later gate punishes.
- */
-function prune(states: RunState[], max: number): RunState[] {
-  states.sort((a, b) => b.orb.y - a.orb.y);
-  if (states.length <= max) return states;
-  const buckets = new Map<string, RunState[]>();
-  for (const s of states) {
-    const k = `${Math.floor(s.orb.x / 30)}${s.orb.polarity}${s.orb.stuck ? 1 : 0}${s.orb.vx > 0 ? 1 : 0}`;
-    const b = buckets.get(k);
-    if (b) b.push(s);
-    else buckets.set(k, [s]);
-  }
-  const lists = [...buckets.values()];
-  const out: RunState[] = [];
-  for (let i = 0; out.length < max; i++) {
-    let any = false;
-    for (const l of lists) {
-      if (i < l.length) {
-        out.push(l[i]!);
-        any = true;
-        if (out.length >= max) break;
+function cloneSim(sim: Sim): Sim {
+  const gates = sim.gates.map(cloneGate);
+  const o: Orb = { ...sim.orb, stuck: null };
+  const st = sim.orb.stuck;
+  if (st) {
+    let shape = null;
+    if (st.shape) {
+      for (let i = 0; i < sim.gates.length && !shape; i++) {
+        const j = sim.gates[i]!.shapes.indexOf(st.shape);
+        if (j >= 0) shape = gates[i]!.shapes[j] ?? null;
       }
     }
-    if (!any) break;
+    o.stuck = { dir: st.dir, shape };
   }
-  return out.sort((a, b) => b.orb.y - a.orb.y);
+  return { orb: o, t: sim.t, camX: sim.camX, speed: sim.speed, gates };
 }
 
-/** Beam search through a whole generated run with the camera chasing. */
-function solveRun(seed: number): { cleared: number; flips: number; seconds: number; failedAt: string } {
-  const stream = new GateStream(seed);
-  const gates: PlacedGate[] = [];
-  let top = FIRST_GATE_TOP;
-  for (let i = 0; i < RUN_GATES + 2; i++) {
-    const g = placeGate(i, stream.next(), top);
-    fitZones(gates[gates.length - 1]?.magnets ?? [], g.magnets);
-    gates.push(g);
-    top = g.nextTop;
+function key(n: Node): string {
+  const o = n.sim.orb;
+  let k = `${o.polarity[0]}${o.stuck ? o.stuck.dir : 0}|${Math.round(o.x / 8)}|${Math.round(o.y / 4)}|${Math.round(o.vy / 30)}|${Math.round(o.vx / 30)}|${n.cleared}`;
+  for (const g of n.sim.gates) {
+    if (g.x > o.x + 400 || g.x + g.width < o.x - 50) continue;
+    for (const v of g.s) k += `|${Math.round(v * 5)}`;
   }
-  // Fields never reach past a neighbouring gate, so each gate only needs itself and its neighbours.
-  const near = gates.map((_, i) => {
-    const gs = gates.slice(Math.max(0, i - 1), i + 2);
-    return { magnets: gs.flatMap((g) => g.magnets), spikes: gs.flatMap((g) => g.spikes) };
-  });
-  const gateIndexAt = (y: number): number => {
-    let k = 0;
-    while (k < gates.length - 1 && y >= gates[k + 1]!.top) k++;
-    return k;
-  };
-  const goal = gates[RUN_GATES - 1]!.passY;
-  const x = VIEW_W / 2;
-  let beam: RunState[] = [{ orb: { x, y: 0, vx: 0, vy: 0, prevX: x, prevY: 0, polarity: 'blue', stuck: null }, cam: -VIEW_H * CAMERA_ANCHOR, flips: 0 }];
-  let t = 0;
-  let deepest = 0;
+  return k;
+}
+
+type Extend = (n: Node) => boolean;
+
+/** Advance a node by one decision. Returns null if the orb dies. */
+function advance(n: Node, doFlip: boolean, extend: Extend | null): Node | null {
+  const c: Node = { ...n, sim: cloneSim(n.sim) };
+  if (doFlip) {
+    flip(c.sim);
+    c.flips++;
+  }
+  for (let i = 0; i < STEPS; i++) {
+    if (extend && !extend(c)) return null;
+    const ev = step(c.sim, DT);
+    if (ev === 'camera' || ev === 'hazard') return null;
+    if (ev === 'knock') c.knocks++;
+  }
+  return c;
+}
+
+/** Beam search. `done` decides success; `extend` adds gates and steers speed in run mode. */
+function search(root: Node, done: (n: Node) => boolean, width: number, maxT: number, extend: Extend | null = null): Node | null {
+  let beam: Node[] = [root];
+  const t0 = root.sim.t;
   while (beam.length) {
-    const next = new Map<string, RunState>();
-    for (const s of beam) {
-      for (const doFlip of [false, true]) {
-        const o = clone(s.orb);
-        if (doFlip) flip(o);
-        let cam = s.cam;
-        let dead = false;
-        let tt = t;
-        for (let i = 0; i < STEPS; i++) {
-          const n = near[gateIndexAt(o.y)]!;
-          if (step(o, n.magnets, n.spikes, DT) === 'dead') {
-            dead = true;
-            break;
-          }
-          tt += DT;
-          const prevCam = cam;
-          cam = Math.max(cam, o.y - VIEW_H * CAMERA_ANCHOR);
-          if (tt > CAMERA_MIN_SPEED_DELAY) cam = Math.max(cam, prevCam + TUNE.cameraSpeed * DT);
-          if (o.y + ORB_RADIUS < cam) {
-            dead = true;
-            break;
+    const seen = new Set<string>();
+    const nextBeam: Node[] = [];
+    for (const n of beam) {
+      for (const f of [false, true]) {
+        const c = advance(n, f, extend);
+        if (!c) continue;
+        if (done(c)) return c;
+        const k = key(c);
+        if (seen.has(k)) continue;
+        seen.add(k);
+        nextBeam.push(c);
+      }
+    }
+    if (!nextBeam.length) return null;
+    if (nextBeam[0]!.sim.t - t0 > maxT) return null;
+    // Furthest along first; fewer flips break ties so the beam keeps calm lines too.
+    nextBeam.sort((a, b) => b.cleared - a.cleared || b.sim.orb.x - a.sim.orb.x || a.flips - b.flips);
+    beam = diverse(nextBeam, width);
+  }
+  return null;
+}
+
+/** Keep the best, but reserve room for each (polarity, height band) so the beam doesn't collapse onto one line. */
+function diverse(list: Node[], width: number): Node[] {
+  if (list.length <= width) return list;
+  const out: Node[] = [];
+  const perBucket = new Map<string, number>();
+  const cap = Math.max(4, Math.floor(width / 12));
+  const rest: Node[] = [];
+  for (const n of list) {
+    const o = n.sim.orb;
+    const b = `${o.polarity}${Math.floor((o.y - CEIL) / 50)}`;
+    const used = perBucket.get(b) ?? 0;
+    if (used < cap) {
+      perBucket.set(b, used + 1);
+      out.push(n);
+    } else rest.push(n);
+    if (out.length >= width) return out;
+  }
+  for (const n of rest) {
+    out.push(n);
+    if (out.length >= width) break;
+  }
+  return out;
+}
+
+function entryNode(gate: Gate, y: number, pol: Polarity, speed: number, t0: number): Node {
+  const x = gate.x - MIN_SPACING;
+  const orb = makeOrb(x, y, pol);
+  orb.vx = speed;
+  if (y <= CEIL + R && pol === 'red') orb.stuck = { dir: -1, shape: null };
+  if (y >= FLOOR - R && pol === 'blue') orb.stuck = { dir: 1, shape: null };
+  const sim: Sim = { orb, t: t0, camX: x - ANCHOR * VIEW_W, speed, gates: [gate] };
+  return { sim, flips: 0, knocks: 0, cleared: 0, next: 0 };
+}
+
+function timed(spec: GateSpec): boolean {
+  const v = spec.v;
+  if (spec.family === 'dual') return (v[1] ?? 0) === 1 || (v[2] ?? 0) === 1;
+  if (spec.family === 'pendulum') return (v[1] ?? 0) === 1;
+  return false;
+}
+
+function runGates(): boolean {
+  const only = args.find((a) => a.startsWith('family='))?.slice(7);
+  const specs = catalogue().filter((s) => !only || s.family === only);
+  const speeds = [TUNE.baseSpeed * TIER_SPEED[0], TUNE.baseSpeed * TIER_SPEED[TIER_SPEED.length - 1]!];
+  let cases = 0;
+  let failed = 0;
+  let maxFlips = 0;
+  let knocked = 0;
+  const byFamily = new Map<string, { cases: number; fail: number }>();
+  const failures: string[] = [];
+  const started = performance.now();
+  for (const spec of specs) {
+    const phases = timed(spec) ? PHASES : [0];
+    for (const speed of speeds) {
+      for (const t0 of phases) {
+        for (const y of ENTRY_Y) {
+          for (const pol of ['red', 'blue'] as const) {
+            const gate = buildGate(spec, 0, 1000);
+            const root = entryNode(gate, y, pol, speed, t0);
+            const end = gate.x + gate.width + 30;
+            const done = (n: Node) => n.sim.orb.x - R > end;
+            const res = search(root, done, BEAM, MAX_T) ?? search(entryNode(buildGate(spec, 0, 1000), y, pol, speed, t0), done, WIDE_BEAM, MAX_T);
+            cases++;
+            const f = byFamily.get(spec.family) ?? { cases: 0, fail: 0 };
+            f.cases++;
+            if (!res) {
+              failed++;
+              f.fail++;
+              failures.push(`${specName(spec)} y=${y} ${pol} speed=${speed.toFixed(0)} t0=${t0}`);
+            } else {
+              maxFlips = Math.max(maxFlips, res.flips);
+              if (res.knocks) knocked++;
+            }
+            byFamily.set(spec.family, f);
           }
         }
-        if (dead) continue;
-        const flips = s.flips + (doFlip ? 1 : 0);
-        if (o.y > goal) return { cleared: RUN_GATES, flips, seconds: t + DECISION, failedAt: '' };
-        const key = keyOf(o, `,${Math.round(cam / 8)}`);
-        const prev = next.get(key);
-        if (!prev || prev.flips > flips) next.set(key, { orb: o, cam, flips });
       }
     }
-    beam = prune([...next.values()], RUN_BEAM);
-    if (beam.length) deepest = Math.max(deepest, beam[0]!.orb.y);
-    t += DECISION;
   }
-  const k = gateIndexAt(deepest);
-  const cleared = gates.filter((g) => g.passY < deepest).length;
-  return { cleared, flips: -1, seconds: t, failedAt: `gate ${k} ${specName(gates[k]!.spec)}` };
+  const secs = ((performance.now() - started) / 1000).toFixed(1);
+  console.log(`Gates: ${specs.length} catalogue gates, ${cases} cases, ${cases - failed} cleared, ${failed} failed (${secs}s).`);
+  for (const [fam, f] of byFamily) console.log(`  ${fam.padEnd(9)} ${String(f.cases - f.fail).padStart(4)}/${f.cases}`);
+  console.log(`  Most flips on a solution: ${maxFlips}. Solutions that needed a knock-back: ${knocked}.`);
+  for (const f of failures.slice(0, 40)) console.log(`  FAIL ${f}`);
+  if (failures.length > 40) console.log(`  ... and ${failures.length - 40} more`);
+  return failed === 0;
 }
 
-function checkRuns(seeds: number): number {
-  console.log(`Runs: ${seeds} generated runs of ${RUN_GATES} gates with the camera chasing (tiers start at gates ${TIER_STARTS.join(', ')}).`);
-  let failed = 0;
-  const t0 = Date.now();
-  for (let seed = 1; seed <= seeds; seed++) {
-    const r = solveRun(seed);
-    if (r.cleared < RUN_GATES) failed++;
-    console.log(
-      `  seed ${String(seed).padStart(2)}  cleared ${String(r.cleared).padStart(2)}/${RUN_GATES}` +
-        (r.flips >= 0 ? `  flips ${r.flips} (${(r.flips / RUN_GATES).toFixed(1)} per gate)  run time ${r.seconds.toFixed(0)} s` : `  STUCK at ${r.failedAt}`),
-    );
+/** Same gate layout as World, but all gates up front so each search node can bring its own copies in. */
+function runCourse(seed: number, n: number): Gate[] {
+  const w = new World();
+  const stream = new GateStream(seed);
+  const gates: Gate[] = [];
+  let x = FIRST_GATE_X;
+  for (let i = 0; i < n; i++) {
+    const g = buildGate(stream.next(i), i, x);
+    gates.push(g);
+    x = g.x + g.width + w.spacingAfter(i);
   }
-  console.log(`Runs: ${seeds - failed}/${seeds} cleared in ${((Date.now() - t0) / 1000).toFixed(1)} s.`);
-  return failed;
+  return gates;
+}
+
+function runRuns(seeds: number): boolean {
+  let ok = 0;
+  const started = performance.now();
+  for (let seed = 1; seed <= seeds; seed++) {
+    const course = runCourse(seed, RUN_GATES);
+    const orb = makeOrb(ANCHOR * VIEW_W, FLOOR - R, 'blue');
+    orb.stuck = { dir: 1, shape: null };
+    const sim: Sim = { orb, t: 0, camX: 0, speed: TUNE.baseSpeed, gates: [] };
+    const root: Node = { sim, flips: 0, knocks: 0, cleared: 0, next: 0 };
+    // The game's first tap is a flip off the floor.
+    flip(sim);
+    root.flips = 1;
+    const extend: Extend = (nd) => {
+      const s = nd.sim;
+      const o = s.orb;
+      while (nd.next < course.length && course[nd.next]!.x < o.x + 800) s.gates.push(cloneGate(course[nd.next++]!));
+      for (const g of s.gates) {
+        if (!g.scored && o.x - R > g.x + g.width) {
+          g.scored = true;
+          nd.cleared++;
+        }
+      }
+      while (s.gates.length && s.gates[0]!.x + s.gates[0]!.width < s.camX - 240) s.gates.shift();
+      const target = TUNE.baseSpeed * (TIER_SPEED[tierOf(nd.cleared)] ?? 1);
+      s.speed += (target - s.speed) * (1 - Math.exp(-SPEED_EASE * DT));
+      return true;
+    };
+    extend(root);
+    const res = search(root, (nd) => nd.cleared >= RUN_GATES, RUN_BEAM, 400, extend) ?? search(root, (nd) => nd.cleared >= RUN_GATES, WIDE_BEAM, 400, extend);
+    const families = course.map((g) => g.spec.family[0]).join('');
+    if (res) {
+      ok++;
+      console.log(`  seed ${String(seed).padStart(3)}: cleared ${RUN_GATES} gates in ${res.sim.t.toFixed(1)}s, ${res.flips} flips, ${res.knocks} knocks  ${families}`);
+    } else console.log(`  seed ${String(seed).padStart(3)}: FAILED  ${families}`);
+  }
+  const secs = ((performance.now() - started) / 1000).toFixed(1);
+  console.log(`Runs: ${ok}/${seeds} seeds cleared ${RUN_GATES} gates (${secs}s).`);
+  return ok === seeds;
 }
 
 const args = process.argv.slice(2);
-for (const arg of args.filter((x) => x.includes('='))) {
-  const [k, v] = arg.split('=');
-  if (!(k! in TUNE) || !Number.isFinite(Number(v))) throw new Error(`Unknown tunable or bad value: ${arg}`);
-  TUNE[k as keyof typeof TUNE] = Number(v);
+const mode = args.find((a) => ['all', 'gates', 'runs'].includes(a)) ?? 'all';
+const count = Number(args.find((a) => /^\d+$/.test(a)) ?? 12);
+for (const a of args) {
+  const m = /^(\w+)=(-?[\d.]+)$/.exec(a);
+  if (!m) continue;
+  const k = m[1] as keyof typeof TUNE;
+  if (!(k in TUNE)) {
+    console.error(`Unknown tunable ${k}.`);
+    process.exit(2);
+  }
+  TUNE[k] = Number(m[2]);
+  console.log(`Override ${k}=${TUNE[k]}`);
 }
-const plain = args.filter((x) => !x.includes('='));
-const mode = plain[0] ?? 'all';
-const seeds = Number(plain[1] ?? 12);
-let bad = 0;
-if (mode === 'all' || mode === 'gates') bad += checkCatalogue();
-if (mode === 'all' || mode === 'runs') bad += checkRuns(seeds);
-process.exit(bad ? 1 : 0);
+
+let pass = true;
+if (mode === 'all' || mode === 'gates') pass = runGates() && pass;
+if (mode === 'all' || mode === 'runs') pass = runRuns(count) && pass;
+console.log(pass ? 'PASS' : 'FAIL');
+process.exit(pass ? 0 : 1);

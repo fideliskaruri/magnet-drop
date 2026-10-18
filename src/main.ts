@@ -68,7 +68,7 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyM' && !e.repeat) toggleMute();
 });
 
-installPanel(game);
+installPanel();
 
 if (import.meta.env.DEV) installDebugHook(game);
 

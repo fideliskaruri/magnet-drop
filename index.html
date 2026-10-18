@@ -3,16 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
-    <meta name="theme-color" content="#03050c" />
+    <meta name="theme-color" content="#0b0d10" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <title>Magnet Drop</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%232a3040' stroke='%232ee6ff' stroke-width='3'/%3E%3Ccircle cx='16' cy='16' r='6' fill='%23ff4a2e'/%3E%3C/svg%3E" />
+    <title>Magnet Drop · Prototype B</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%232a3040' stroke='%233e9bff' stroke-width='3'/%3E%3Ccircle cx='16' cy='16' r='6' fill='%23e5484d'/%3E%3C/svg%3E" />
     <style>
       html,
       body {
         margin: 0;
         height: 100%;
-        background: #03050c;
+        background: #0b0d10;
         overflow: hidden;
         touch-action: none;
         user-select: none;
@@ -34,16 +34,16 @@
         display: grid;
         place-items: center;
         padding: 0;
-        border: 1px solid rgba(122, 134, 168, 0.35);
+        border: 1px solid rgba(138, 147, 163, 0.35);
         border-radius: 50%;
-        background: rgba(7, 11, 24, 0.6);
-        color: #7a86a8;
+        background: rgba(11, 13, 16, 0.6);
+        color: #8a93a3;
         cursor: pointer;
         touch-action: none;
         z-index: 11;
       }
       #mute[aria-pressed='true'] {
-        color: #ff4a2e;
+        color: #e5484d;
       }
       #tune-toggle {
         position: fixed;
@@ -54,17 +54,17 @@
         display: grid;
         place-items: center;
         padding: 0;
-        border: 1px solid rgba(122, 134, 168, 0.35);
+        border: 1px solid rgba(138, 147, 163, 0.35);
         border-radius: 50%;
-        background: rgba(7, 11, 24, 0.6);
-        color: #7a86a8;
+        background: rgba(11, 13, 16, 0.6);
+        color: #8a93a3;
         cursor: pointer;
         touch-action: none;
         z-index: 11;
       }
       #tune-toggle[aria-expanded='true'] {
-        color: #2ee6ff;
-        border-color: #2ee6ff;
+        color: #3e9bff;
+        border-color: #3e9bff;
       }
       #tune {
         position: fixed;
@@ -79,9 +79,9 @@
         touch-action: pan-y;
         /* Start below the gear and mute buttons, which stay on top. */
         padding: calc(env(safe-area-inset-top, 0px) + 66px) 18px calc(env(safe-area-inset-bottom, 0px) + 24px);
-        background: rgba(5, 8, 18, 0.94);
-        border-left: 1px solid rgba(46, 230, 255, 0.25);
-        color: #dfe6ff;
+        background: rgba(11, 13, 16, 0.95);
+        border-left: 1px solid rgba(62, 155, 255, 0.25);
+        color: #e8ecf1;
         font: 14px/1.35 system-ui, sans-serif;
         user-select: none;
         -webkit-user-select: none;
@@ -95,7 +95,7 @@
           height: 58vh;
           width: 100vw;
           border-left: 0;
-          border-top: 1px solid rgba(46, 230, 255, 0.25);
+          border-top: 1px solid rgba(62, 155, 255, 0.25);
           border-radius: 16px 16px 0 0;
           padding-top: 14px;
         }
@@ -105,18 +105,18 @@
         font-size: 18px;
         letter-spacing: 0.08em;
         text-transform: uppercase;
-        color: #2ee6ff;
+        color: #3e9bff;
       }
       #tune h3 {
         margin: 20px 0 6px;
         font-size: 12px;
         letter-spacing: 0.14em;
         text-transform: uppercase;
-        color: #7a86a8;
+        color: #8a93a3;
       }
       #tune p {
         margin: 4px 0 0;
-        color: #7a86a8;
+        color: #8a93a3;
         font-size: 12px;
       }
       .tune-head {
@@ -132,7 +132,7 @@
         border-radius: 8px;
       }
       .tune-row.changed {
-        background: rgba(46, 230, 255, 0.08);
+        background: rgba(62, 155, 255, 0.08);
       }
       .tune-top {
         display: flex;
@@ -141,29 +141,29 @@
       }
       .tune-value {
         font-variant-numeric: tabular-nums;
-        color: #2ee6ff;
+        color: #3e9bff;
       }
       .tune-row.changed .tune-value {
-        color: #ffd23f;
+        color: #f2a33a;
       }
       .tune-hint {
-        color: #7a86a8;
+        color: #8a93a3;
         font-size: 12px;
       }
       #tune input[type='range'] {
         width: 100%;
         height: 28px;
         margin: 2px 0;
-        accent-color: #2ee6ff;
+        accent-color: #3e9bff;
         touch-action: none;
       }
       #tune button {
         min-height: 40px;
         padding: 0 14px;
-        border: 1px solid rgba(46, 230, 255, 0.4);
+        border: 1px solid rgba(62, 155, 255, 0.4);
         border-radius: 10px;
-        background: rgba(46, 230, 255, 0.08);
-        color: #dfe6ff;
+        background: rgba(62, 155, 255, 0.08);
+        color: #e8ecf1;
         font: 600 14px system-ui, sans-serif;
         cursor: pointer;
       }
@@ -177,13 +177,47 @@
       }
       #tune .tune-status {
         min-height: 18px;
-        color: #ffd23f;
+        color: #f2a33a;
         word-break: break-all;
+      }
+      .tune-stats {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 4px 12px;
+        margin: 0;
+        font-size: 12px;
+      }
+      .tune-stats dt {
+        color: #8a93a3;
+      }
+      .tune-stats dd {
+        margin: 0;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+      #rotate {
+        position: fixed;
+        left: 50%;
+        top: calc(env(safe-area-inset-top, 0px) + 14px);
+        transform: translateX(-50%);
+        display: none;
+        padding: 6px 12px;
+        border-radius: 999px;
+        background: rgba(11, 13, 16, 0.8);
+        border: 1px solid rgba(138, 147, 163, 0.35);
+        color: #8a93a3;
+        font: 600 12px system-ui, sans-serif;
+        pointer-events: none;
+        z-index: 9;
+      }
+      body.portrait #rotate {
+        display: block;
       }
     </style>
   </head>
   <body>
     <canvas id="game"></canvas>
+    <div id="rotate" role="note">Rotate for best view</div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

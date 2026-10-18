@@ -1,79 +1,74 @@
-// Every tuning constant lives here. Units: px, seconds.
-export const VIEW_W = 360;
-export const VIEW_H = 640;
+// Every fixed constant lives here. Units: px, seconds. Live tunables are in tune.ts.
+import { THEME } from './theme.ts';
+
+/** Landscape logical playfield, letterboxed to fit the window. */
+export const VIEW_W = 640;
+export const VIEW_H = 360;
+
+/** Inner faces of the ceiling and floor magnet rails. The band between them is where the orb flies. */
+export const CEIL = 30;
+export const FLOOR = 330;
+export const MID = (CEIL + FLOOR) / 2;
 
 export const PHYSICS_HZ = 120;
 export const DT = 1 / PHYSICS_HZ;
 export const MAX_FRAME_DT = 0.1;
 
 export const ORB_RADIUS = 11;
-// Speeds, forces, zone sizes and bounces live in tune.ts so the tuning panel can change them live.
 
-// Spikes only count once they are this far inside the orb's drawn edge.
-export const SPIKE_FORGIVENESS = 4;
+/** Where the orb sits on screen (share of the width from the left) when it keeps pace. */
+export const ANCHOR = 0.36;
+/** The camera follows the orb once it gets this far right, so it never leaves the screen. */
+export const CAMERA_LEAD = 0.55;
+/** The left edge glows once the orb is this close (px) to being pushed off. */
+export const EDGE_WARN = 120;
 
-// Shield: absorbs one spike hit. Every run starts with one and it comes back after clearing
-// TUNE.shieldRecharge gates.
-export const SHIELD_HOP = 220;
-export const SHIELD_GRACE = 1;
-export const SHIELD_HITSTOP = 0.12;
-
-// The top edge glows red once the orb is this close to being caught by the camera.
-export const STALL_WARN = 0.16;
-
-export const CAMERA_ANCHOR = 0.35;
-export const CAMERA_MIN_SPEED_DELAY = 2;
-
-// Endless gates. Each gate is one barrier of spikes with a single gap, plus the magnets that get you there.
-// Difficulty only moves through these discrete tiers so `pnpm sim` can prove every gate the generator can make.
-/** First gate index (0-based) of each tier. */
-export const TIER_STARTS = [0, 6, 16, 30] as const;
-/** Width of the gap in the spike barrier, per tier. */
-export const GAP_WIDTHS = [150, 124, 104, 88] as const;
-/** Empty space between one gate's bottom and the next gate's top, per tier. */
-export const GATE_SPACING = [230, 210, 195, 180] as const;
-/** Where the first gate starts below the orb's spawn point. */
-export const FIRST_GATE_TOP = 240;
+/** World x of the first gate. The orb starts at ANCHOR * VIEW_W. */
+export const FIRST_GATE_X = 660;
+/** The first gates are a fixed tutorial; the stream generates from here on. */
+export const TUTORIAL_GATES = 6;
+/** First gate index (0-based) of each procedural tier. Tier 0 starts after the tutorial. */
+export const TIER_STARTS = [0, 14, 24, 38] as const;
+/** Empty space between one gate's end and the next gate's start, per tier (scaled by TUNE.gateGap). */
+export const GATE_SPACING = [300, 270, 250, 235] as const;
+/** Forward speed multiplier per tier (times TUNE.baseSpeed). Modest. */
+export const TIER_SPEED = [1, 1.05, 1.1, 1.17] as const;
+/** The scroll speed eases toward the tier speed at this rate (per second). */
+export const SPEED_EASE = 0.6;
+/** A pass within this share of the opening's half-height from its centre earns the centre bonus. */
+export const CENTRE_BAND = 0.3;
 
 export const DEATH_FREEZE = 0.06;
-export const RESTART_LOCK = 0.6;
-export const AUTO_READY = 1.5;
+/** Taps are ignored this long after a death, so a panicked tap doesn't skip the death. */
+export const RESTART_LOCK = 0.3;
+export const AUTO_READY = 1.6;
 
-export const TRAIL_LENGTH = 26;
-export const BEST_KEY = 'magnetdrop.endless-tuner.best';
-export const MUTED_KEY = 'magnetdrop.endless-tuner.muted';
+export const TRAIL_LENGTH = 22;
+export const BEST_KEY = 'magnetdrop.proto-b.best';
+export const MUTED_KEY = 'magnetdrop.proto-b.muted';
 
-// Visual feedback only. None of these touch physics.
+// Visual feedback only. None of these touch physics. Restrained: no heavy flashing.
 export const JUICE = {
-  launchHitstop: 0.035,
-  stickHitstop: 0.018,
-  /** Sticks slower than this don't freeze. */
-  stickHitstopSpeed: 220,
+  /** Strong surface launch: ~60 ms hit-stop. */
+  launchHitstop: 0.06,
   /** Shake in px and radians at trauma 1 (amplitude is trauma squared). */
-  maxShake: 16,
-  maxShakeAngle: 0.03,
-  traumaDecay: 1.5,
+  maxShake: 9,
+  maxShakeAngle: 0.012,
+  traumaDecay: 2,
   /** Shake multiplier under prefers-reduced-motion. */
   reducedShake: 0.2,
   reducedFlash: 0.25,
   /** Big full-screen flashes are at least this far apart (no more than 3 per second). */
   flashMinGap: 0.34,
-  flashMaxAlpha: 0.35,
-  nearMissMargin: 10,
-  nearMissCooldown: 0.5,
-  /** Score is one point per gate. */
+  flashMaxAlpha: 0.18,
   milestoneEvery: 10,
   bigMilestoneEvery: 50,
-  chainWindow: 2.2,
-  /** Score at which depth heat maxes out. */
-  heatDepth: 40,
-  bpmMin: 96,
-  bpmMax: 160,
-  particleCap: 420,
-  pulseCap: 48,
-  popupCap: 12,
-  ghostCap: 10,
-  dangerZone: 130,
+  particleCap: 320,
+  pulseCap: 32,
+  popupCap: 10,
+  ghostCap: 8,
+  /** Background field particles that drift with the field direction. */
+  fieldParticles: 70,
 } as const;
 
 // Sound design. Levels are linear gains before the master limiter.
@@ -85,8 +80,8 @@ export const AUDIO = {
   layerGain: 0.55,
   /** Concurrent one-shot sounds. Extra ones are dropped (death always plays). */
   maxVoices: 10,
-  /** How far left/right the orb's x position pans its sounds (0..1). */
-  pan: 0.45,
+  /** How far left/right the orb's screen position pans its sounds (0..1). */
+  pan: 0.35,
   /** Seconds for the continuous layers to glide to a new level. */
   layerSmoothing: 0.05,
   /** Flips closer together than this climb the scale. */
@@ -96,33 +91,25 @@ export const AUDIO = {
   launchChainWindow: 3,
   launchChainMax: 6,
   /** Impact speed (px/s) that plays a stick, bounce or wall hit at full force. */
-  impactFull: 520,
+  impactFull: 420,
   milestoneEvery: 10,
-  /** Spike danger starts this far (px, edge to edge) from a spike row. */
-  spikeDangerRange: 50,
-  /** Stall danger starts when the orb is this close (px) to the top of the screen. */
-  stallDangerRange: 150,
-  /** Passing within this gap (px) of spikes and surviving plays the near-miss sound. */
-  nearMissGap: 9,
-  hum: 0.1,
-  repel: 0.12,
-  stuck: 0.13,
-  wind: 0.14,
+  /** Hazard danger starts this far (px, edge to edge) from dangerous machinery. */
+  hazardDangerRange: 50,
+  /** Edge danger starts when the orb is this close (px) to the left edge. */
+  edgeDangerRange: 150,
+  hum: 0.08,
+  repel: 0.1,
+  stuck: 0.1,
+  wind: 0.12,
   danger: 0.13,
 } as const;
 
+/** Shorthands used by effects and the renderer. */
 export const COLORS = {
-  bg: '#070b18',
-  grid: 'rgba(80, 110, 170, 0.09)',
-  wall: '#1a2236',
-  red: '#ff4a2e',
-  blue: '#2ee6ff',
-  spike: '#ffe14a',
-  spikeBase: '#8a7a2a',
-  text: '#e8eefc',
-  dim: '#7a86a8',
-  chrome: '#2a3040',
-  /** Background at max heat. */
-  bgHot: '#170826',
+  red: THEME.red,
+  blue: THEME.blue,
+  text: THEME.text,
+  dim: THEME.dim,
+  hazard: THEME.hazard,
   white: '#ffffff',
 } as const;

@@ -1,5 +1,5 @@
+import { clearAnalytics, summary, type Summary } from './analytics.ts';
 import { sound } from './audio.ts';
-import type { Game } from './game.ts';
 import { changedTune, DEFAULTS, resetTune, saveTune, SLIDER_GROUPS, TUNE, type Slider } from './tune.ts';
 
 // The tuning panel: a gear button (or the T key) opens it and pauses the game.
@@ -29,7 +29,7 @@ function format(sl: Slider, v: number): string {
   return v.toFixed(decimals(sl.step));
 }
 
-export function installPanel(game: Game): void {
+export function installPanel(): void {
   const button = document.createElement('button');
   button.id = 'tune-toggle';
   button.type = 'button';
@@ -109,6 +109,53 @@ export function installPanel(game: Game): void {
   status.setAttribute('aria-live', 'polite');
   panel.append(note, actions, status);
 
+  // Local play stats (never sent anywhere), to compare against Prototype A.
+  const statsHead = document.createElement('h3');
+  statsHead.textContent = 'Stats';
+  const statsBody = document.createElement('dl');
+  statsBody.className = 'tune-stats';
+  const statsActions = document.createElement('div');
+  statsActions.className = 'tune-actions';
+  const copyStats = document.createElement('button');
+  copyStats.type = 'button';
+  copyStats.textContent = 'Copy stats JSON';
+  const clearStats = document.createElement('button');
+  clearStats.type = 'button';
+  clearStats.textContent = 'Clear stats';
+  statsActions.append(copyStats, clearStats);
+  const statsNote = document.createElement('p');
+  statsNote.textContent = 'Stored only on this device.';
+  panel.append(statsHead, statsBody, statsActions, statsNote);
+
+  function paintStats(): void {
+    const s: Summary = summary();
+    const pct = (v: number): string => `${Math.round(v * 100)}%`;
+    const byType = Object.entries(s.deathsByGateType)
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `${k} ${v}`)
+      .join(', ');
+    const rows: [string, string][] = [
+      ['Sessions', String(s.sessions)],
+      ['Runs', String(s.runs)],
+      ['Runs per session', s.runsPerSession.toFixed(1)],
+      ['Median gates cleared', String(s.medianGatesCleared)],
+      ['Retry after death (10 s)', pct(s.retryAfterDeathRate)],
+      ['Median session', `${(s.medianSessionMs / 60000).toFixed(1)} min`],
+      ['Deaths before gate 3', pct(s.deathsBeforeGate3Share)],
+      ['Deaths by gate type', byType || 'none'],
+      ['Runs reaching 5 / 10 / 20', `${s.reachPct[5]}% / ${s.reachPct[10]}% / ${s.reachPct[20]}%`],
+      ['Days played', String(s.distinctDays)],
+    ];
+    statsBody.replaceChildren();
+    for (const [k, v] of rows) {
+      const dt = document.createElement('dt');
+      dt.textContent = k;
+      const dd = document.createElement('dd');
+      dd.textContent = v;
+      statsBody.append(dt, dd);
+    }
+  }
+
   function paint(key: keyof typeof TUNE): void {
     const r = rows.get(key)!;
     r.input.value = String(TUNE[key]);
@@ -119,7 +166,6 @@ export function installPanel(game: Game): void {
     for (const key of rows.keys()) paint(key);
   }
   function applied(sl: Slider | null): void {
-    if (!sl || sl.zones) game.world.refit();
     if (!sl || sl.key === 'volume') sound()?.applyVolume();
     status.textContent = '';
   }
@@ -130,6 +176,7 @@ export function installPanel(game: Game): void {
     button.setAttribute('aria-expanded', String(v));
     if (v) {
       paintAll();
+      paintStats();
       status.textContent = '';
     }
   }
@@ -157,6 +204,19 @@ export function installPanel(game: Game): void {
       () => (status.textContent = text === '{}' ? 'Copied. Nothing differs from the defaults.' : 'Copied the values that differ from the defaults.'),
       () => (status.textContent = `Copy was blocked. Values: ${text}`),
     ) ?? (status.textContent = `Values: ${text}`);
+  });
+
+  copyStats.addEventListener('click', () => {
+    const text = JSON.stringify(summary(), null, 2);
+    navigator.clipboard?.writeText(text).then(
+      () => (status.textContent = 'Copied the stats.'),
+      () => (status.textContent = `Copy was blocked. Stats: ${text}`),
+    ) ?? (status.textContent = `Stats: ${text}`);
+  });
+  clearStats.addEventListener('click', () => {
+    clearAnalytics();
+    paintStats();
+    status.textContent = 'Stats cleared.';
   });
 
   window.addEventListener(

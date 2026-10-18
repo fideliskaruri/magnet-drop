@@ -2,7 +2,7 @@
   "name": "magnet-drop",
   "version": "0.1.0",
   "private": true,
-  "description": "One-touch vertical arcade prototype: flip polarity to slingshot a falling orb around hazards.",
+  "description": "One-touch sideways polarity runner prototype: flip polarity to arc an auto-running orb through magnetic gates.",
   "type": "module",
   "packageManager": "pnpm@12.9.1",
   "scripts": {

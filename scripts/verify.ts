@@ -4,15 +4,16 @@ import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium, type Page } from 'playwright-core';
-import { AUDIO } from '../src/config.ts';
+import { AUDIO, CEIL, FLOOR, MID } from '../src/config.ts';
 import type { DebugHook } from '../src/debug.ts';
+import { TUTORIAL } from '../src/gates.ts';
 import { DEFAULTS } from '../src/tune.ts';
 import type { Family, GateSpec } from '../src/types.ts';
 
 type Snap = ReturnType<DebugHook['snapshot']>;
 
-const BASE = process.argv[2] ?? 'http://localhost:5180/';
-const OUT = join(tmpdir(), 'agent-scratch', 'magnet-drop-endless-tuner');
+const BASE = process.argv[2] ?? 'http://localhost:5182/';
+const OUT = join(tmpdir(), 'agent-scratch', 'magnet-drop-proto-b');
 mkdirSync(OUT, { recursive: true });
 
 const results: { name: string; ok: boolean; detail: string }[] = [];
@@ -22,23 +23,18 @@ function check(name: string, ok: boolean, detail: string): void {
 }
 
 const snap = (page: Page): Promise<Snap> => page.evaluate(() => window.__md!.snapshot());
-const tap = (page: Page): Promise<void> => page.touchscreen.tap(195, 500);
+const tap = (page: Page): Promise<void> => page.touchscreen.tap(420, 220);
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const audio = (page: Page): Promise<ReturnType<DebugHook['audio']>> => page.evaluate(() => window.__md!.audio());
-const mix = (page: Page): Promise<ReturnType<DebugHook['mix']>> => page.evaluate(() => window.__md!.mix());
 const dbfs = (v: number): string => (v > 0 ? `${(20 * Math.log10(v)).toFixed(1)} dBFS` : '-inf');
 const shot = (page: Page, name: string): Promise<Buffer> => page.screenshot({ path: join(OUT, `${name}.png`) });
 
-const gate = (family: Family, v: number[], o: Partial<GateSpec> = {}): GateSpec => ({ family, tier: 0, v, mirror: false, swap: false, ...o });
-
-// Idle (never tapping) the blue orb dropped at x=180:
-// - drift[1,0]: red magnet on the left pulls it left. With swap the magnet is blue and pushes it right.
-const DRIFT = gate('drift', [1, 0]);
-// - perch[1,0]: a red magnet right under the spawn, gap under it. The orb lands and sticks.
-const PERCH = gate('perch', [1, 0]);
-// - drift[3,0] swapped: pushed right into the gap at x=310, a free point. drift[0,0] swapped: pushed onto the spikes.
-const FREE = gate('drift', [3, 0], { swap: true });
-const KILL = gate('drift', [0, 0], { swap: true });
+const gate = (family: Family, v: number[], tier = 3): GateSpec => ({ family, tier, v });
+// wall[0] opens at the top: an orb held to the floor runs into its lower block and gets pushed off the left edge.
+const WALL_TOP = gate('wall', [0]);
+const WALL_MID = gate('wall', [1]);
+// splitter[1,1]: the upper lane is blocked by a grinder.
+const GRINDER = gate('splitter', [1, 1]);
 
 async function waitFor(page: Page, pred: (s: Snap) => boolean, timeoutMs: number): Promise<Snap | null> {
   const end = Date.now() + timeoutMs;
@@ -50,17 +46,43 @@ async function waitFor(page: Page, pred: (s: Snap) => boolean, timeoutMs: number
   return null;
 }
 
-/** Back to the ready screen, then start a run on the given gates. */
-async function startRun(page: Page, gates: GateSpec[], seed = 1, shield = true): Promise<void> {
+async function boot(page: Page): Promise<void> {
   await page.reload();
   await page.waitForFunction(() => window.__md !== undefined);
-  await page.evaluate(([s, p, sh]) => window.__md!.setup(s as number, p as GateSpec[], sh as boolean), [seed, gates, shield] as const);
+}
+
+/** Back to the ready screen, then start a run on the given gates. The start tap launches off the floor as red (pull up). */
+async function startRun(page: Page, gates: GateSpec[], seed = 1): Promise<void> {
+  await boot(page);
+  await page.evaluate(([s, g]) => window.__md!.setup(s as number, g as GateSpec[]), [seed, gates] as const);
   await tap(page);
   await waitFor(page, (s) => s.state === 'playing', 1000);
 }
 
+/** Hold the orb at a fixed height through gate i (for each i) by re-placing it between frames. */
+function holdThrough(page: Page, ys: number[]): Promise<void> {
+  return page.evaluate(async (heights) => {
+    const md = window.__md!;
+    for (let i = 0; i < heights.length; i++) {
+      await new Promise<void>((resolve) => {
+        const end = performance.now() + 15000;
+        const id = setInterval(() => {
+          const s = md.snapshot();
+          const g = md.gates().find((q) => q.index === i);
+          if (!g || g.scored || s.state !== 'playing' || performance.now() > end) {
+            clearInterval(id);
+            resolve();
+            return;
+          }
+          if (s.x > g.x - 150) md.place(s.x, heights[i]!, undefined, 0);
+        }, 4);
+      });
+    }
+  }, ys);
+}
+
 const browser = await chromium.launch({ channel: 'msedge', headless: true });
-const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+const context = await browser.newContext({ viewport: { width: 844, height: 390 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
 const page = await context.newPage();
 const errors: string[] = [];
 page.on('pageerror', (e) => errors.push(e.message));
@@ -72,422 +94,315 @@ try {
   // 1. Boot
   await page.goto(BASE);
   await page.waitForFunction(() => window.__md !== undefined);
-  await sleep(300);
+  await page.evaluate(() => localStorage.clear());
+  await boot(page);
+  await sleep(400);
   let s = await snap(page);
   await shot(page, '01-ready');
-  check('boot', s.state === 'ready' && errors.length === 0, `state=${s.state} errors=${errors.length}`);
+  const rotateHidden = await page.locator('#rotate').isHidden();
+  check('boot', s.state === 'ready' && s.stuck && s.stuckDir === 1 && errors.length === 0 && rotateHidden, `state=${s.state} resting on the floor=${s.stuck && s.stuckDir === 1} rotate hint hidden in landscape=${rotateHidden} errors=${errors.length}`);
 
-  // 2. Start and flip
-  await page.evaluate((g) => window.__md!.setup(1, g), [DRIFT]);
+  // 2. Start launches off the floor; flip reverses the vertical pull; the arc is smooth (no snapping).
+  await page.evaluate((g) => window.__md!.setup(1, g), [WALL_MID, WALL_MID, WALL_MID]);
   await tap(page);
   s = (await waitFor(page, (x) => x.state === 'playing', 1000)) ?? (await snap(page));
-  const p0 = s.polarity;
+  const started = s;
+  await sleep(140);
+  const rising = await snap(page);
+  await page.evaluate(() => {
+    const w = window as unknown as { __rec: Snap[]; __recOn: boolean };
+    w.__rec = [];
+    w.__recOn = true;
+    const loop = (): void => {
+      if (!w.__recOn) return;
+      w.__rec.push(window.__md!.snapshot());
+      requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+  });
+  await sleep(60);
   await tap(page);
-  await sleep(50);
-  const p1 = (await snap(page)).polarity;
-  await shot(page, '02-flipped-red');
-  await tap(page);
-  await sleep(50);
-  const p2 = (await snap(page)).polarity;
-  check('start-and-flip', s.state === 'playing' && p0 === 'blue' && p1 === 'red' && p2 === 'blue', `${s.state} ${p0}->${p1}->${p2}`);
-  const au0 = await audio(page);
-  check('audio-running-after-tap', au0.state === 'running' && !au0.muted && au0.persistentNodes > 0, `context=${au0.state} muted=${au0.muted} persistent nodes=${au0.persistentNodes}`);
-
-  // 2b. Mute button: toggles sound, never flips polarity, survives a reload.
-  const box = await page.locator('#mute').boundingBox();
-  const bx = (box?.x ?? 0) + (box?.width ?? 0) / 2;
-  const by = (box?.y ?? 0) + (box?.height ?? 0) / 2;
-  const polBefore = (await snap(page)).polarity;
-  await page.touchscreen.tap(bx, by);
-  await sleep(200);
-  const mutedSnap = await snap(page);
-  const mutedAudio = await audio(page);
-  await shot(page, '02b-muted');
-  await page.reload();
-  await page.waitForFunction(() => window.__md !== undefined);
-  const mutedAfterReload = (await audio(page)).muted;
-  const label = await page.locator('#mute').getAttribute('aria-label');
-  await tap(page);
-  await sleep(100);
-  const stillMuted = await audio(page);
-  await page.touchscreen.tap(bx, by);
-  await sleep(150);
-  const unmuted = await audio(page);
+  await sleep(40);
+  const flipped = await snap(page);
+  await sleep(500);
+  const rec = await page.evaluate(() => {
+    const w = window as unknown as { __rec: Snap[]; __recOn: boolean };
+    w.__recOn = false;
+    return w.__rec;
+  });
+  await shot(page, '02-arc');
+  check('start-launch', started.state === 'playing' && started.polarity === 'red' && started.launches === 1 && rising.vy < -100, `polarity=${started.polarity} launches=${started.launches} vy shortly after=${rising.vy.toFixed(0)}`);
+  check('flip-reverses-pull', rising.ay < 0 && flipped.polarity === 'blue' && flipped.ay > 0, `red ay=${rising.ay.toFixed(0)} -> blue ay=${flipped.ay.toFixed(0)}`);
+  let maxAccel = 0;
+  let free = 0;
+  for (let i = 1; i < rec.length; i++) {
+    const a = rec[i - 1]!;
+    const b = rec[i]!;
+    const dt = b.t - a.t;
+    if (dt <= 0 || a.stuck || b.stuck || b.y < CEIL + 45 || b.y > FLOOR - 45) continue;
+    free++;
+    maxAccel = Math.max(maxAccel, Math.abs(b.vy - a.vy) / dt);
+  }
+  const vys = rec.map((r) => r.vy);
+  const crossing = vys.findIndex((v, i) => i > 0 && vys[i - 1]! < 0 && v >= 0);
+  const between = vys.filter((v) => v > -150 && v < 150).length;
   check(
-    'mute-toggle',
-    mutedSnap.polarity === polBefore && mutedAudio.muted && mutedAfterReload && label === 'Turn sound on' && stillMuted.muted && stillMuted.state !== 'running' && !unmuted.muted && unmuted.state === 'running',
-    `polarity ${polBefore}->${mutedSnap.polarity}, muted=${mutedAudio.muted}, after reload muted=${mutedAfterReload} (${label}), tap while muted ctx=${stillMuted.state}, unmuted ctx=${unmuted.state}`,
+    'arc-not-snap',
+    free > 6 && maxAccel < DEFAULTS.pull * 1.25 + DEFAULTS.damping * DEFAULTS.maxVy && crossing > 0 && between >= 2,
+    `${free} free frames, max |dvy/dt|=${maxAccel.toFixed(0)} px/s2 (pull ${DEFAULTS.pull}), vy turned over at frame ${crossing} with ${between} frames in -150..150`,
   );
 
-  // 2c. Offline renders of every sound through the real output chain: audible, no clipping, voices released.
-  const names = await page.evaluate(() => window.__md!.soundNames());
-  const renders = [];
-  for (const n of names) renders.push(await page.evaluate((x) => window.__md!.renderSound(x), n));
-  for (const r of renders) console.log(`      ${r.name.padEnd(13)} peak ${dbfs(r.peak).padStart(11)}  rms ${dbfs(r.rms).padStart(11)}`);
-  const quiet = renders.filter((r) => r.peak < 0.05 || r.rms < 0.002);
-  const hot = renders.filter((r) => r.peak >= 0.99 || r.clipped > 0);
-  const leaked = renders.filter((r) => r.voicesAfter !== 0 && !r.name.startsWith('layer') && r.name !== 'everything');
-  const worst = renders.find((r) => r.name === 'everything');
-  check('sounds-audible', renders.length === names.length && quiet.length === 0, quiet.map((r) => `${r.name} ${dbfs(r.peak)}`).join(', ') || `${renders.length} sounds all above -26 dBFS peak`);
-  check('sounds-not-clipping', hot.length === 0, hot.map((r) => `${r.name} ${dbfs(r.peak)}`).join(', ') || `loudest single ${dbfs(Math.max(...renders.filter((r) => r.name !== 'everything').map((r) => r.peak)))}, everything at once ${dbfs(worst?.peak ?? 0)}`);
-  check('voices-released', leaked.length === 0, leaked.map((r) => r.name).join(', ') || 'every one-shot freed its voice when done');
-
-  // 3. Attract vs repel: drift gate with a red magnet on the left, orb dropped at x=180.
-  // Blue is pulled left; flipped to red it is pushed right. Sample the field sound while it acts.
-  const drifted = (x: Snap): boolean => Math.abs(x.x - 180) > 15;
-  await startRun(page, [DRIFT]);
-  let b = await waitFor(page, drifted, 3000);
-  const attractMix = await mix(page);
-  check('attract-pulls-toward', b !== null && b.x < 165 && b.vx < 0, `blue orb x=${b?.x.toFixed(0)} vx=${b?.vx.toFixed(1)} (red magnet on the left)`);
-  await startRun(page, [DRIFT]);
-  await tap(page);
-  b = await waitFor(page, drifted, 3000);
-  const repelMix = await mix(page);
+  // 3. Rail stick and launch: red rides up and sticks to the ceiling rail; a flip launches it down.
+  await startRun(page, [WALL_TOP, WALL_TOP, WALL_TOP]);
+  const onCeil = await waitFor(page, (x) => x.stuck && x.stuckDir === -1, 3000);
   await sleep(150);
-  await shot(page, '03-repel');
-  check('field-sound-follows', attractMix.attract > 0.2 && attractMix.repel === 0 && repelMix.repel > 0.2 && repelMix.attract === 0, `blue near red: hum=${attractMix.attract.toFixed(2)} buzz=${attractMix.repel.toFixed(2)}; red near red: hum=${repelMix.attract.toFixed(2)} buzz=${repelMix.repel.toFixed(2)}`);
-  check('repel-pushes-away', b !== null && b.polarity === 'red' && b.x > 195 && b.vx > 0, `red orb x=${b?.x.toFixed(0)} vx=${b?.vx.toFixed(1)}`);
-
-  // 4. Stick and launch on the perch (red magnet right under the blue orb).
-  await startRun(page, [PERCH]);
-  const stuck = await waitFor(page, (x) => x.stuck, 4000);
-  await sleep(150);
-  const stuckMix = await mix(page);
-  await shot(page, '04-stuck');
+  await shot(page, '03-ceiling-stuck');
   await tap(page);
-  await sleep(80);
-  const afterLaunch = await snap(page);
-  const speed = Math.hypot(afterLaunch.vx, afterLaunch.vy);
-  await sleep(120);
-  await shot(page, '04-launched');
-  check('stuck-sound', stuckMix.stuck === 1 && stuckMix.attract === 0, `stuck layer=${stuckMix.stuck} hum=${stuckMix.attract}`);
-  check('stick-and-launch', stuck !== null && afterLaunch.launches === 1 && !afterLaunch.stuck && speed >= 550, `stuck=${stuck !== null} launches=${afterLaunch.launches} speed=${speed.toFixed(0)}`);
-
-  // 5a. The shield: an idle fall onto the spikes, but the shield absorbs the hit and the run goes on.
-  await startRun(page, [KILL, FREE, FREE, FREE, FREE, FREE, FREE, FREE, FREE, FREE]);
-  s = await snap(page);
-  const shieldAtStart = s.shield;
-  const saved = await waitFor(page, (x) => x.shieldsUsed === 1, 5000);
-  await sleep(120);
-  await shot(page, '05a-shield-saved');
-  const afterSave = await waitFor(page, (x) => x.grace <= 0 && x.score >= 1, 4000);
+  await sleep(30);
+  const launched = await snap(page);
+  await sleep(90);
+  await shot(page, '03-launched');
   check(
-    'shield-saves-once',
-    shieldAtStart && saved !== null && saved.state === 'playing' && !saved.shield && afterSave !== null && afterSave.state === 'playing',
-    `shield at start=${shieldAtStart} used=${saved?.shieldsUsed} state after hit=${saved?.state} still playing past the spikes=${afterSave?.state === 'playing'}`,
+    'rail-stick-and-launch',
+    onCeil !== null && launched.launches === 2 && !launched.stuck && launched.vy > DEFAULTS.launchSpeed * 0.7,
+    `stuck to ceiling=${onCeil !== null} launches=${launched.launches} vy after flip=${launched.vy.toFixed(0)} (launchSpeed ${DEFAULTS.launchSpeed})`,
   );
 
-  // 5b. The shield comes back after clearing a few more gates (free drift gates, no taps needed).
-  let back5: Snap | null = null;
-  const until = Date.now() + 25000;
-  while (Date.now() < until) {
+  // 4. Scoring: a centre pass is +2, an off-centre pass +1. Then held on the floor against a wall: pushed off the left edge.
+  await page.evaluate(() => localStorage.clear());
+  await startRun(page, [WALL_MID, WALL_MID, WALL_TOP]);
+  await holdThrough(page, [MID, MID + 45]);
+  const scored = await snap(page);
+  await shot(page, '04-scored');
+  check('gate-score-and-centre', scored.score === 3 && scored.gatesCleared === 2 && scored.centres === 1, `score=${scored.score} gates=${scored.gatesCleared} centre passes=${scored.centres} (expected 3/2/1)`);
+  if (scored.polarity === 'red') await tap(page);
+  let peakEdge = 0;
+  let camDeath: Snap | null = null;
+  const camEnd = Date.now() + 12000;
+  while (Date.now() < camEnd) {
     const x = await snap(page);
-    if (x.state !== 'playing' || x.shield) {
-      back5 = x;
+    if (x.state === 'dying') {
+      camDeath = x;
       break;
     }
-    if (x.stuck) await tap(page);
-    await sleep(60);
+    peakEdge = Math.max(peakEdge, (await page.evaluate(() => window.__md!.mix())).danger);
+    if (x.screenX < 60) await shot(page, '04-pushed');
+    await sleep(30);
   }
-  await shot(page, '05b-shield-ready');
-  check('shield-recharges', back5 !== null && back5.state === 'playing' && back5.shield, `state=${back5?.state} shield=${back5?.shield} gates scored=${back5?.score}`);
-
-  // 5c. One point per gate: two free gates then a fatal one, no taps, no shield. Then a fast restart.
-  await page.evaluate(() => localStorage.clear());
-  await startRun(page, [FREE, FREE, KILL], 1, false);
-  const one = await waitFor(page, (x) => x.score === 1, 6000);
-  const dead = await waitFor(page, (x) => x.state === 'dying', 10000);
-  const deathScore = dead?.score ?? 0;
-  await sleep(200);
-  await shot(page, '05-death');
-  await sleep(450);
+  await sleep(150);
+  await shot(page, '04-death-camera');
+  check('pushed-off-left', camDeath !== null && camDeath.deathCause === 'camera' && peakEdge > 0.5, `died=${camDeath !== null} cause=${camDeath?.deathCause} edge danger peaked ${peakEdge.toFixed(2)}`);
+  await sleep(250);
   const t0 = Date.now();
   await tap(page);
   const back = await waitFor(page, (x) => x.state === 'playing', 1000);
   const restartMs = Date.now() - t0;
-  check('score-per-gate', one !== null && dead !== null && deathScore === 2, `score at death=${deathScore} (two free gates, then the spikes)`);
-  check('restart-under-1s', back !== null && back.score < deathScore, `restart took ${restartMs} ms after the 650 ms lockout, score reset to ${back?.score}`);
-  await page.reload();
-  await page.waitForFunction(() => window.__md !== undefined);
+  check('restart-under-1s', back !== null && back.score === 0 && restartMs < 1000, `restart took ${restartMs} ms (after the 300 ms lockout), score reset to ${back?.score}`);
+  await boot(page);
   const best = (await snap(page)).best;
   const keys = await page.evaluate(() => Object.keys(localStorage));
-  check('best-persists', best === deathScore && best > 0 && keys.includes('magnetdrop.endless-tuner.best'), `best after reload=${best} keys=${keys.join(',')}`);
+  check('best-persists', best === 3 && keys.includes('magnetdrop.proto-b.best'), `best after reload=${best} keys=${keys.join(',')}`);
 
-  // 6. Stall pressure: hang on the perch and get scrolled off the top.
-  await startRun(page, [PERCH]);
-  const hung = await waitFor(page, (x) => x.stuck, 4000);
-  let peakDanger = 0;
-  let stallDeath: Snap | null = null;
-  const stallEnd = Date.now() + 12000;
-  while (Date.now() < stallEnd) {
-    const x = await snap(page);
-    if (x.state === 'dying') {
-      stallDeath = x;
-      break;
+  // 5. Hazard death: red (pull up) placed in the upper lane of a splitter whose upper lane holds a grinder.
+  await startRun(page, [GRINDER]);
+  const near = await waitFor(page, (x) => x.gateX !== null && x.gateX - x.x < 260, 5000);
+  if (near?.gateX != null) await page.evaluate((gx) => window.__md!.place(gx + 30, 52, undefined, 0), near.gateX);
+  const hz = await waitFor(page, (x) => x.state === 'dying', 4000);
+  await sleep(120);
+  await shot(page, '05-death-hazard');
+  check('hazard-death', hz !== null && hz.deathCause === 'hazard', `died=${hz !== null} cause=${hz?.deathCause}`);
+
+  // 6. Every gate family on screen (the orb is held at mid height so it reaches each gate).
+  const families: [Family, number[]][] = [
+    ['wall', [1]],
+    ['dual', [0, 1, 1]],
+    ['pinball', [1, 1]],
+    ['splitter', [2, 1]],
+    ['tunnel', [1, 1, 1]],
+    ['door', [1, 0]],
+    ['pendulum', [1, 1]],
+    ['rails', [1, 0, 1]],
+  ];
+  let wrong = 0;
+  for (const [family, v] of families) {
+    await startRun(page, [gate(family, v), WALL_MID]);
+    const at = await waitFor(page, (x) => x.gateX !== null, 3000);
+    // Hold the orb mid-height until the gate is well on screen.
+    await page.evaluate(
+      (y) =>
+        new Promise<void>((resolve) => {
+          const md = window.__md!;
+          const end = performance.now() + 6000;
+          const id = setInterval(() => {
+            const s = md.snapshot();
+            if (s.state !== 'playing' || s.gateX === null || s.gateX - s.camX < 330 || performance.now() > end) {
+              clearInterval(id);
+              resolve();
+              return;
+            }
+            md.place(s.x, y, undefined, 0);
+          }, 4);
+        }),
+      MID - 40,
+    );
+    await sleep(120);
+    await shot(page, `06-${family}`);
+    if (at?.family !== family) {
+      wrong++;
+      console.log(`      ${family}: next gate was ${at?.family}`);
     }
-    peakDanger = Math.max(peakDanger, (await mix(page)).danger);
-    await sleep(16);
   }
-  check('stall-danger-sound', peakDanger > 0.6, `danger layer peaked at ${peakDanger.toFixed(2)} before the screen caught the orb`);
-  check('stall-kills', hung !== null && stallDeath !== null, `stuck=${hung !== null} died=${stallDeath !== null} at y=${stallDeath?.y.toFixed(0)} camY=${stallDeath?.camY.toFixed(0)}`);
+  check('gate-screens', wrong === 0, `${families.length} families shown, wrong gate in ${wrong}, saved to ${OUT}`);
 
-  // 7. Screenshot every family at its easiest and hardest tier (camera frames the gate on entry).
-  let wrongScreens = 0;
-  for (const family of ['drift', 'twin', 'perch', 'rail', 'slope', 'corridor'] as Family[]) {
-    for (const tier of [family === 'corridor' ? 2 : family === 'rail' || family === 'slope' ? 1 : 0, 3]) {
-      await startRun(page, [gate(family, [0, 0, 0], { tier })]);
-      const x = await waitFor(page, (q) => q.gateTop !== null, 3000);
-      await sleep(100);
-      await shot(page, `07-${family}-t${tier}`);
-      if (x?.family !== family || x.tier !== tier) {
-        wrongScreens += 1;
-        check(`screen-${family}-t${tier}`, false, `orb is in ${x?.family} t${x?.tier}`);
-      }
-    }
-  }
-  check('family-screens', wrongScreens === 0, `12 screens, wrong gate in ${wrongScreens}, saved to ${OUT}`);
-
-  // 7b. Generation: deterministic per seed, different across seeds, ramps up in difficulty.
-  const runs = await page.evaluate(() => [window.__md!.preview(7, 40), window.__md!.preview(7, 40), window.__md!.preview(8, 40)]);
+  // 6b. Generation: deterministic per seed, the fixed tutorial first, every family appears later.
+  const runs = await page.evaluate(() => [window.__md!.preview(7, 60), window.__md!.preview(7, 60), window.__md!.preview(8, 60)]);
   const [r7, r7b, r8] = runs.map((r) => JSON.stringify(r));
+  const tut = runs[0]!.slice(0, TUTORIAL.length).map((g) => `${g.family}${g.v.join('')}`).join(',');
+  const tutWant = TUTORIAL.map((g) => `${g.family}${g.v.join('')}`).join(',');
+  const famLate = new Set(runs[0]!.slice(TUTORIAL.length).map((g) => g.family));
   const tiers = runs[0]!.map((g) => g.tier);
-  const lateFamilies = new Set(runs[0]!.slice(30).map((g) => g.family));
-  const repeats = runs[0]!.filter((g, i) => i > 0 && g.family === runs[0]![i - 1]!.family).length;
   check('seeded-generation', r7 === r7b && r7 !== r8, `same seed identical=${r7 === r7b}, other seed differs=${r7 !== r8}`);
-  check(
-    'difficulty-ramp',
-    tiers[0] === 0 && tiers[39] === 3 && tiers.every((t, i) => i === 0 || t >= tiers[i - 1]!) && lateFamilies.size >= 4 && repeats === 0,
-    `tiers ${tiers.join('')}, ${lateFamilies.size} families after gate 30, back-to-back repeats=${repeats}`,
-  );
+  check('tutorial-then-ramp', tut === tutWant && famLate.size === 8 && tiers.every((t, i) => i === 0 || t >= tiers[i - 1]!), `tutorial ${tut}; ${famLate.size} families after it; tiers ${tiers.join('')}`);
 
-  // 8. Long session: mash taps for 20 s, auto-restarting. Object counts must stay bounded and per-frame work small.
-  // (Headless Edge caps rAF at 30 fps, so we measure update + render work time, not frame intervals.)
-  await page.reload();
-  await page.waitForFunction(() => window.__md !== undefined);
-  let maxMagnets = 0;
-  let maxSpikes = 0;
+  // 7. Sound: offline renders through the real output chain are audible and never clip.
+  const names = await page.evaluate(() => window.__md!.soundNames());
+  const renders = [];
+  for (const n of names) renders.push(await page.evaluate((x) => window.__md!.renderSound(x), n));
+  const quiet = renders.filter((r) => r.peak < 0.05 || r.rms < 0.002);
+  const hot = renders.filter((r) => r.peak >= 0.99 || r.clipped > 0);
+  check('sounds-audible', quiet.length === 0, quiet.map((r) => `${r.name} ${dbfs(r.peak)}`).join(', ') || `${renders.length} sounds all audible`);
+  check('sounds-not-clipping', hot.length === 0, hot.map((r) => `${r.name} ${dbfs(r.peak)}`).join(', ') || `loudest ${dbfs(Math.max(...renders.map((r) => r.peak)))}`);
+
+  // 8. Real play: random taps for 20 s on generated courses, auto-restarting. Per-frame work must stay small.
+  await page.evaluate(() => window.__md!.setup(null, []));
+  await page.evaluate(() => window.__md!.resetFrameWork());
   let maxScore = 0;
-  let maxOut = 0;
   let maxVoices = 0;
   const end = Date.now() + 20000;
   while (Date.now() < end) {
     await tap(page);
     const x = await snap(page);
-    maxMagnets = Math.max(maxMagnets, x.magnets);
-    maxSpikes = Math.max(maxSpikes, x.spikes);
     maxScore = Math.max(maxScore, x.score);
-    const au = await audio(page);
-    maxOut = Math.max(maxOut, au.outputPeak);
-    maxVoices = Math.max(maxVoices, au.voices);
-    await sleep(150 + Math.random() * 500);
+    maxVoices = Math.max(maxVoices, (await audio(page)).voices);
+    await sleep(150 + Math.random() * 450);
   }
-  const mash = await audio(page);
-  check('live-output', maxOut > 0.02 && maxOut < 1, `live output peak ${dbfs(maxOut)} while playing (audible, under full scale)`);
-  check('bounded-voices', maxVoices <= AUDIO.maxVoices + 1 && mash.peakVoices <= AUDIO.maxVoices + 1, `max concurrent voices sampled=${maxVoices}, engine peak=${mash.peakVoices}, cap=${AUDIO.maxVoices} (+1 for death), dropped=${mash.dropped}`);
-  // Let it fall back to the ready screen; the per-frame mix updates must not create nodes, and every voice must free up.
-  // The slower tuner physics can keep an idle orb alive a while; the stall still ends it.
-  await waitFor(page, (x) => x.state === 'ready', 30000);
-  await sleep(1500);
+  await shot(page, '08-play');
+  const frames = await page.evaluate(() => window.__md!.frameWork());
+  frames.sort((a, b) => a - b);
+  const p95 = frames[Math.floor(frames.length * 0.95)] ?? 0;
+  check('frame-work', frames.length > 100 && p95 < 8, `p95 update+render=${p95.toFixed(2)} ms over ${frames.length} frames (budget 8 ms), best score while mashing=${maxScore}`);
+  check('bounded-voices', maxVoices <= AUDIO.maxVoices + 1, `max concurrent voices=${maxVoices}, cap=${AUDIO.maxVoices}`);
+  await waitFor(page, (x) => x.state === 'ready', 20000);
+  await sleep(1000);
   const idle0 = await audio(page);
   await sleep(1500);
   const idle1 = await audio(page);
-  check('no-per-frame-nodes', idle1.nodesCreated === idle0.nodesCreated && idle1.voices === 0, `nodes created during 1.5 s of frames: ${idle1.nodesCreated - idle0.nodesCreated}, voices still playing: ${idle1.voices}, total nodes ever: ${idle1.nodesCreated}`);
-  const frames = await page.evaluate(() => window.__md!.frameWork());
-  frames.sort((x, y) => x - y);
-  const p95 = frames[Math.floor(frames.length * 0.95)] ?? 0;
-  check('bounded-objects', maxMagnets <= 16 && maxSpikes <= 16, `max magnets=${maxMagnets} spikes=${maxSpikes} best score=${maxScore}`);
-  check('frame-work', frames.length > 100 && p95 < 8, `p95 update+render=${p95.toFixed(2)} ms over ${frames.length} frames (budget 8 ms)`);
+  check('no-per-frame-nodes', idle1.nodesCreated === idle0.nodesCreated, `audio nodes created during 1.5 s of frames: ${idle1.nodesCreated - idle0.nodesCreated}`);
 
-  // 9. Juice: consecutive frames around a launch and a death, in slow motion.
-  await startRun(page, [PERCH]);
-  await waitFor(page, (x) => x.stuck, 4000);
-  await sleep(120);
-  await page.evaluate(() => window.__md!.setTimeScale(0.08));
-  await tap(page);
-  for (let i = 0; i < 8; i++) await shot(page, `09-launch-burst-${i}`);
-  await page.evaluate(() => window.__md!.setTimeScale(1));
-  await startRun(page, [KILL], 1, false);
-  await waitFor(page, (x) => x.passY !== null && x.y > x.passY - 140, 6000);
-  await page.evaluate(() => window.__md!.setTimeScale(0.08));
-  await waitFor(page, (x) => x.state === 'dying', 30000);
-  for (let i = 0; i < 10; i++) await shot(page, `09-death-burst-${i}`);
-  await page.evaluate(() => window.__md!.setTimeScale(1));
-  check('burst-frames', true, 'launch and death bursts saved');
-
-  // 10. Deep run look: heat forced to max, mashing taps.
-  await page.reload();
-  await page.waitForFunction(() => window.__md !== undefined);
-  await page.evaluate(() => window.__md!.setHeatFloor(1));
-  await tap(page);
-  let maxHeat = 0;
-  for (let i = 0; i < 6; i++) {
-    await sleep(350 + Math.random() * 300);
-    await tap(page);
-    await sleep(60);
-    await shot(page, `10-hot-${i}`);
-    maxHeat = Math.max(maxHeat, (await page.evaluate(() => window.__md!.juice())).heat);
-  }
-  check('heat-rises', maxHeat > 0.8, `max heat=${maxHeat.toFixed(2)} with the deep-run floor forced on`);
-
-  // 11. Every effect firing at once: frame budget and the flash limiter.
-  await page.reload();
-  await page.waitForFunction(() => window.__md !== undefined);
-  await page.evaluate((g) => window.__md!.setup(1, g), [PERCH]);
-  await tap(page);
+  // 9. Every effect at once: frame budget and the 3 flashes per second limiter.
+  await startRun(page, [WALL_MID, WALL_MID]);
   await page.evaluate(() => {
-    window.__md!.setHeatFloor(1);
     window.__md!.setStress(true);
     window.__md!.resetFrameWork();
     window.__md!.resetJuiceStats();
   });
-  const stressEnd = Date.now() + 8000;
-  let peakParticles = 0;
-  let shotStress = false;
-  while (Date.now() < stressEnd) {
-    await sleep(250);
-    const j = await page.evaluate(() => window.__md!.juice());
-    peakParticles = Math.max(peakParticles, j.particles);
-    if (!shotStress && Date.now() > stressEnd - 4000) {
-      await shot(page, '11-stress');
-      shotStress = true;
-    }
-  }
+  await sleep(3000);
+  await shot(page, '09-stress');
+  await sleep(3000);
   const stressFrames = await page.evaluate(() => window.__md!.frameWork());
-  const stressJuice = await page.evaluate(() => window.__md!.juice());
+  const juice = await page.evaluate(() => window.__md!.juice());
   await page.evaluate(() => window.__md!.setStress(false));
-  stressFrames.sort((x, y) => x - y);
+  stressFrames.sort((a, b) => a - b);
   const sp95 = stressFrames[Math.floor(stressFrames.length * 0.95)] ?? 0;
-  check('frame-work-all-effects', stressFrames.length > 100 && sp95 < 8, `p95=${sp95.toFixed(2)} ms max=${(stressFrames.at(-1) ?? 0).toFixed(2)} ms over ${stressFrames.length} frames, peak particles=${peakParticles}`);
-  const ft = stressJuice.flashTimes;
-  let worstWindow = 0;
-  for (let i = 0; i < ft.length; i++) worstWindow = Math.max(worstWindow, ft.filter((t) => t >= ft[i]! && t < ft[i]! + 1).length);
-  check('flash-limit', ft.length > 5 && worstWindow <= 3, `${ft.length} big flashes in 8 s of nonstop requests, worst 1 s window=${worstWindow} (limit 3)`);
+  check('frame-work-all-effects', stressFrames.length > 60 && sp95 < 8, `p95=${sp95.toFixed(2)} ms over ${stressFrames.length} frames, peak particles=${juice.particles}`);
+  const ft = juice.flashTimes;
+  let worst = 0;
+  for (let i = 0; i < ft.length; i++) worst = Math.max(worst, ft.filter((t) => t >= ft[i]! && t < ft[i]! + 1).length);
+  check('flash-limit', ft.length > 3 && worst <= 3, `${ft.length} big flashes in 6 s of nonstop requests, worst 1 s window=${worst} (limit 3), max shake ${juice.maxShakePx.toFixed(1)} px`);
 
-  // 13. Tuning panel: pauses, sliders apply live, zones never touch, values persist, reset works.
-  const tuneState = (): Promise<ReturnType<DebugHook['tune']>> => page.evaluate(() => window.__md!.tune());
-  const slide = (key: string, v: number): Promise<void> =>
-    page.evaluate(([k, val]) => {
-      const el = document.querySelector<HTMLInputElement>(`#tune input[name="${k}"]`)!;
-      el.value = String(val);
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-    }, [key, v] as const);
-  await startRun(page, [gate('twin', [1, 0]), DRIFT], 1);
-  await sleep(400);
+  // 10. Analytics: the events from this session are recorded locally and the summary adds up.
+  const an = await page.evaluate(() => window.__md!.analytics());
+  const kinds = new Set(an.events.map((e) => e.event as string));
+  const stored = await page.evaluate(() => (localStorage.getItem('magnetdrop.proto-b.analytics') ?? '').length);
+  const deathEv = an.events.find((e) => e.event === 'death' && e.cause === 'camera');
+  const gateEv = an.events.find((e) => e.event === 'gate_clear');
+  const sm = an.summary;
+  check(
+    'analytics-events',
+    ['session_start', 'run_start', 'gate_clear', 'death', 'restart'].every((k) => kinds.has(k)) && stored > 0 && deathEv !== undefined && 'gateType' in deathEv && 'runMs' in deathEv && gateEv !== undefined && 'type' in gateEv && 'clean' in gateEv,
+    `${an.events.length} events, kinds ${[...kinds].join(',')}, sample death ${JSON.stringify(deathEv)}`,
+  );
+  check(
+    'analytics-summary',
+    sm.runs > 5 && sm.deaths > 3 && sm.sessions >= 1 && sm.retryAfterDeathRate > 0 && sm.retryAfterDeathRate <= 1 && sm.deathsBeforeGate3Share >= 0 && sm.deathsBeforeGate3Share <= 1 && sm.distinctDays === 1 && (sm.deathsByGateType.wall ?? 0) >= 1,
+    JSON.stringify({ runs: sm.runs, deaths: sm.deaths, runsPerSession: sm.runsPerSession, medianGates: sm.medianGatesCleared, retry: sm.retryAfterDeathRate, early: sm.deathsBeforeGate3Share, byType: sm.deathsByGateType, reach: sm.reachPct, days: sm.distinctDays }),
+  );
+
+  // 11. Tuning panel: pauses, Stats section, sliders apply and persist, reset works.
+  await startRun(page, [WALL_MID, WALL_MID]);
+  await sleep(300);
   await page.keyboard.press('KeyT');
   const q0 = await snap(page);
-  await sleep(600);
+  await sleep(500);
   const q1 = await snap(page);
-  const u0 = await tuneState();
-  check(
-    'panel-pauses',
-    u0.paused && (await page.locator('#tune').isVisible()) && q0.y === q1.y && q0.camY === q1.camY,
-    `open=${u0.paused} orb y ${q0.y.toFixed(1)} -> ${q1.y.toFixed(1)} over 600 ms`,
-  );
-  // Press the panel itself (its heading), not a slider, which would rightly move.
-  const head = (await page.locator('#tune h2').boundingBox())!;
-  await page.touchscreen.tap(head.x + head.width / 2, head.y + head.height / 2);
-  await sleep(100);
-  const q2 = await snap(page);
-  check('panel-press-no-flip', q2.polarity === q1.polarity && (await tuneState()).paused, `polarity ${q1.polarity} -> ${q2.polarity}, panel still open`);
-  check('defaults-no-clash', u0.clashes === 0 && JSON.stringify(u0.values) === JSON.stringify(DEFAULTS), `clashes=${u0.clashes}, reaches ${u0.reaches.map((r) => r.toFixed(0)).join('/')}`);
-  await slide('fieldScale', 1.3);
-  await slide('zoneGap', 40);
-  const big = await tuneState();
-  await slide('fieldScale', 0.5);
-  await slide('showZones', 1);
-  await slide('gravity', 900);
-  const u1 = await tuneState();
-  check(
-    'slider-applies',
-    u1.values.fieldScale === 0.5 && u1.values.gravity === 900 && u1.values.showZones === 1 && u1.reaches.some((r, i) => r < u0.reaches[i]! - 1),
-    `fieldScale=${u1.values.fieldScale} gravity=${u1.values.gravity}; reaches ${u0.reaches.map((r) => r.toFixed(0)).join('/')} -> ${u1.reaches.map((r) => r.toFixed(0)).join('/')}`,
-  );
-  check('zone-refit-no-clash', big.clashes === 0 && u1.clashes === 0, `field x1.3 gap 40: clashes=${big.clashes} reaches ${big.reaches.map((r) => r.toFixed(0)).join('/')}; field x0.5: clashes=${u1.clashes}`);
-  const changedRows = await page.locator('#tune .tune-row.changed').evaluateAll((els) => els.map((el) => (el as HTMLElement).dataset.key).sort().join(','));
-  check('changed-rows-marked', changedRows === 'fieldScale,gravity,showZones,zoneGap', `rows marked changed: ${changedRows}`);
-  await shot(page, '13-panel-phone');
+  const paused = (await page.evaluate(() => window.__md!.tune())).paused;
+  check('panel-pauses', paused && (await page.locator('#tune').isVisible()) && q0.x === q1.x && q0.y === q1.y, `open=${paused} orb x ${q0.x.toFixed(1)} -> ${q1.x.toFixed(1)} over 500 ms`);
+  const statRows = await page.locator('#tune .tune-stats dt').count();
+  const statText = (await page.locator('#tune .tune-stats').textContent()) ?? '';
+  await page.evaluate(() => {
+    const el = document.querySelector<HTMLInputElement>('#tune input[name="baseSpeed"]')!;
+    el.value = '230';
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  const tuned = (await page.evaluate(() => window.__md!.tune())).values.baseSpeed;
+  await shot(page, '11-panel');
   await page.locator('#tune').evaluate((el) => (el.scrollTop = el.scrollHeight));
-  await page.getByRole('button', { name: 'Copy values' }).click();
+  await page.getByRole('button', { name: 'Copy stats JSON' }).click();
   await sleep(150);
-  const statusText = (await page.locator('#tune .tune-status').textContent()) ?? '';
-  await shot(page, '13b-panel-phone-bottom');
-  check('copy-values', statusText.length > 0, statusText);
+  const status = (await page.locator('#tune .tune-status').textContent()) ?? '';
+  await shot(page, '11-panel-stats');
+  check('panel-stats', statRows >= 6 && /run/i.test(statText) && status.length > 0, `${statRows} stat rows, copy status "${status}"`);
+  check('slider-applies', tuned === 230, `baseSpeed=${tuned}`);
   await page.keyboard.press('Escape');
   await sleep(300);
-  const q3 = await snap(page);
-  check('panel-closes-and-resumes', !(await tuneState()).paused && !(await page.locator('#tune').isVisible()) && q3.y !== q1.y, `orb moving again: y ${q1.y.toFixed(1)} -> ${q3.y.toFixed(1)}`);
-  await shot(page, '13c-zones-shown');
-  await page.reload();
-  await page.waitForFunction(() => window.__md !== undefined);
-  const u2 = await tuneState();
-  check('tune-persists', u2.values.fieldScale === 0.5 && u2.values.gravity === 900 && u2.values.zoneGap === 40, `after reload fieldScale=${u2.values.fieldScale} gravity=${u2.values.gravity} zoneGap=${u2.values.zoneGap}`);
+  const q2 = await snap(page);
+  check('panel-closes-and-resumes', !(await page.evaluate(() => window.__md!.tune())).paused && q2.x !== q1.x, `orb x ${q1.x.toFixed(1)} -> ${q2.x.toFixed(1)}`);
+  await boot(page);
+  const persisted = (await page.evaluate(() => window.__md!.tune())).values.baseSpeed;
   await page.locator('#tune-toggle').tap();
   await sleep(100);
   await page.locator('#tune').evaluate((el) => (el.scrollTop = el.scrollHeight));
   await page.getByRole('button', { name: 'Reset to defaults' }).click();
-  const u3 = await tuneState();
-  const stored = await page.evaluate(() => localStorage.getItem('magnetdrop.endless-tuner.settings'));
-  check(
-    'tune-reset',
-    JSON.stringify(u3.values) === JSON.stringify(DEFAULTS) && (await page.locator('#tune .tune-row.changed').count()) === 0,
-    `values back to defaults, stored=${stored}`,
-  );
-  const r0 = await snap(page);
-  await page.touchscreen.tap(195, 120);
-  await sleep(100);
-  const r1 = await snap(page);
-  check('game-press-closes-panel', !(await tuneState()).paused && r1.state === r0.state && r1.polarity === r0.polarity, `panel closed, state ${r0.state} -> ${r1.state}, polarity unchanged`);
-  const wide = await browser.newPage({ viewport: { width: 1280, height: 800 } });
-  await wide.goto(BASE);
-  await wide.waitForFunction(() => window.__md !== undefined);
-  await wide.keyboard.press('KeyT');
-  await sleep(200);
-  await shot(wide, '13d-panel-desktop');
-  await wide.close();
+  const reset = (await page.evaluate(() => window.__md!.tune())).values;
+  page.once('dialog', (d) => void d.accept());
+  await page.getByRole('button', { name: 'Clear stats' }).click();
+  await sleep(150);
+  const afterClear = await page.evaluate(() => window.__md!.analytics().events.length);
+  await page.keyboard.press('Escape');
+  check('tune-persists-and-resets', persisted === 230 && JSON.stringify(reset) === JSON.stringify(DEFAULTS), `after reload baseSpeed=${persisted}; after reset defaults=${JSON.stringify(reset) === JSON.stringify(DEFAULTS)}`);
+  check('clear-stats', afterClear <= 1, `events after clear=${afterClear}`);
 
-  check('no-console-errors', errors.length === 0, errors.slice(0, 3).join(' | ') || 'none');
+  // 12. Portrait phone: rotate hint shown, still playable letterboxed.
+  const portrait = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+  const pp = await portrait.newPage();
+  pp.on('pageerror', (e) => errors.push(e.message));
+  await pp.goto(BASE);
+  await pp.waitForFunction(() => window.__md !== undefined);
+  const hintShown = await pp.locator('#rotate').isVisible();
+  await pp.touchscreen.tap(195, 420);
+  await sleep(600);
+  const ps = await pp.evaluate(() => window.__md!.snapshot());
+  await pp.screenshot({ path: join(OUT, '12-portrait.png') });
+  check('portrait', hintShown && ps.state === 'playing', `rotate hint visible=${hintShown} state after tap=${ps.state}`);
+  await portrait.close();
 
-  // 12. Reduced motion: same launch and death, shake and flash must drop.
-  const measure = async (p: Page): Promise<{ shake: number; flash: number; zoom: number; reduced: boolean }> => {
-    let shake = 0;
-    let flash = 0;
-    let zoom = 0;
-    let reduced = false;
-    for (const launch of [true, false]) {
-      await startRun(p, [launch ? PERCH : KILL], 1, false);
-      await p.evaluate(() => window.__md!.resetJuiceStats());
-      if (launch) {
-        await waitFor(p, (x) => x.stuck, 4000);
-        await tap(p);
-        await sleep(500);
-      } else {
-        await waitFor(p, (x) => x.state === 'dying', 8000);
-        await sleep(700);
-      }
-      const j = await p.evaluate(() => window.__md!.juice());
-      shake = Math.max(shake, j.maxShakePx);
-      flash = Math.max(flash, j.maxFlashAlpha);
-      zoom = Math.max(zoom, j.maxZoomDev);
-      reduced = j.reduced;
-    }
-    return { shake, flash, zoom, reduced };
-  };
-  const normal = await measure(page);
-  const rmContext = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, reducedMotion: 'reduce' });
-  const rmPage = await rmContext.newPage();
-  await rmPage.goto(BASE);
-  await rmPage.waitForFunction(() => window.__md !== undefined);
-  const rm = await measure(rmPage);
-  await shot(rmPage, '12-reduced-motion-death');
-  check(
-    'reduced-motion',
-    rm.reduced && !normal.reduced && rm.shake < normal.shake * 0.35 && rm.flash < normal.flash * 0.35 && rm.zoom < 0.001,
-    `normal shake=${normal.shake.toFixed(1)}px flash=${normal.flash.toFixed(2)} zoom=${normal.zoom.toFixed(3)} | reduced shake=${rm.shake.toFixed(1)}px flash=${rm.flash.toFixed(2)} zoom=${rm.zoom.toFixed(3)}`,
-  );
+  check('no-console-errors', errors.length === 0, errors.slice(0, 5).join(' | ') || 'none');
+} catch (e) {
+  check('script', false, String(e));
 } finally {
   await browser.close();
 }
 
 const failed = results.filter((r) => !r.ok);
-console.log(`\n${results.length - failed.length}/${results.length} passed. Screenshots: ${OUT}`);
+console.log(`\n${results.length - failed.length}/${results.length} checks passed. Screenshots in ${OUT}`);
 process.exit(failed.length ? 1 : 0);

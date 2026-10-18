@@ -1,65 +1,39 @@
-// Live tunables. Physics, the world, effects and sound read `TUNE` every frame, so the
+// Live tunables. Physics, the world, effects and sound read `TUNE` every step, so the
 // slider panel can change them mid-run. Values persist in localStorage.
 
 export interface Tune {
-  gravity: number;
-  terminalFall: number;
-  maxSpeed: number;
+  baseSpeed: number;
+  pull: number;
+  damping: number;
+  maxVy: number;
   launchSpeed: number;
-  airDamping: number;
-  pointStrength: number;
-  railStrength: number;
-  repelScale: number;
-  fieldScale: number;
-  railField: number;
-  zoneGap: number;
-  repelBounce: number;
-  wallBounce: number;
-  cameraSpeed: number;
-  shieldRecharge: number;
+  launchBoost: number;
+  railReach: number;
+  recover: number;
+  backBounce: number;
+  bounce: number;
+  neutralPull: number;
+  tunnelGrip: number;
+  gateGap: number;
   juice: number;
   volume: number;
   showZones: number;
 }
 
-/** The values every earlier variant shipped with, kept for comparison. */
-export const ORIGINAL: Tune = {
-  gravity: 700,
-  terminalFall: 380,
-  maxSpeed: 900,
-  launchSpeed: 620,
-  airDamping: 0.6,
-  pointStrength: 3000,
-  railStrength: 2600,
-  repelScale: 1,
-  fieldScale: 1,
-  railField: 110,
-  zoneGap: 0,
-  repelBounce: 0.6,
-  wallBounce: 0.4,
-  cameraSpeed: 60,
-  shieldRecharge: 5,
-  juice: 1,
-  volume: 1,
-  showZones: 0,
-};
-
 export const DEFAULTS: Tune = {
-  gravity: 560,
-  terminalFall: 300,
-  maxSpeed: 700,
-  launchSpeed: 520,
-  airDamping: 0.9,
-  pointStrength: 3000,
-  railStrength: 2600,
-  repelScale: 0.65,
-  fieldScale: 0.75,
-  railField: 80,
-  zoneGap: 16,
-  repelBounce: 0.45,
-  wallBounce: 0.4,
-  cameraSpeed: 50,
-  shieldRecharge: 5,
+  baseSpeed: 190,
+  pull: 850,
+  damping: 1.4,
+  maxVy: 420,
+  launchSpeed: 380,
+  launchBoost: 60,
+  railReach: 28,
+  recover: 110,
+  backBounce: 120,
+  bounce: 0.35,
+  neutralPull: 0.12,
+  tunnelGrip: 0.55,
+  gateGap: 1,
   juice: 1,
   volume: 1,
   showZones: 0,
@@ -72,8 +46,6 @@ export interface Slider {
   min: number;
   max: number;
   step: number;
-  /** Changing it reshapes the magnet zones, so live magnets are refitted. */
-  zones?: boolean;
   toggle?: boolean;
 }
 
@@ -84,46 +56,44 @@ export interface SliderGroup {
 
 export const SLIDER_GROUPS: SliderGroup[] = [
   {
-    title: 'Speed',
+    title: 'Movement',
     sliders: [
-      { key: 'gravity', label: 'Gravity', hint: 'How hard the orb falls', min: 200, max: 1200, step: 10 },
-      { key: 'terminalFall', label: 'Max fall speed', hint: 'Falling eases toward this', min: 120, max: 700, step: 10 },
-      { key: 'maxSpeed', label: 'Top speed', hint: 'Hard cap on any movement', min: 300, max: 1400, step: 10 },
-      { key: 'launchSpeed', label: 'Launch speed', hint: 'Kick when you flip off a magnet', min: 200, max: 1000, step: 10 },
-      { key: 'airDamping', label: 'Side drag', hint: 'How fast sideways drift dies', min: 0, max: 3, step: 0.05 },
+      { key: 'baseSpeed', label: 'Base speed', hint: 'How fast the world scrolls at the start, px/s', min: 100, max: 340, step: 5 },
+      { key: 'pull', label: 'Vertical pull', hint: 'Acceleration toward the attracting rail', min: 300, max: 2000, step: 25 },
+      { key: 'damping', label: 'Vertical drag', hint: 'Lower keeps more momentum (longer arcs)', min: 0, max: 4, step: 0.05 },
+      { key: 'maxVy', label: 'Top vertical speed', hint: 'Hard cap on up and down speed', min: 200, max: 900, step: 10 },
+      { key: 'recover', label: 'Recovery speed', hint: 'Extra forward speed while you are behind your spot', min: 0, max: 260, step: 5 },
     ],
   },
   {
     title: 'Magnets',
     sliders: [
-      { key: 'pointStrength', label: 'Round magnet pull', hint: 'Force at the centre of a round magnet', min: 500, max: 6000, step: 50 },
-      { key: 'railStrength', label: 'Rail pull', hint: 'Force next to a rail', min: 500, max: 6000, step: 50 },
-      { key: 'repelScale', label: 'Same colour push', hint: 'Push strength as a share of the pull', min: 0, max: 1.5, step: 0.05 },
-      { key: 'fieldScale', label: 'Round zone size', hint: 'Share of each magnet\u2019s designed reach', min: 0.3, max: 1.3, step: 0.05, zones: true },
-      { key: 'railField', label: 'Rail zone size', hint: 'Reach out from a rail, in pixels', min: 20, max: 160, step: 5, zones: true },
-      { key: 'zoneGap', label: 'Gap between zones', hint: 'Zones shrink to keep at least this apart', min: 0, max: 80, step: 2, zones: true },
-      { key: 'repelBounce', label: 'Same colour bounce', hint: 'Bounce off a same colour magnet', min: 0, max: 1, step: 0.05 },
-      { key: 'wallBounce', label: 'Wall bounce', hint: 'Bounce off the side walls', min: 0, max: 1, step: 0.05 },
+      { key: 'launchSpeed', label: 'Launch speed', hint: 'Kick when you flip off a surface', min: 150, max: 800, step: 10 },
+      { key: 'launchBoost', label: 'Launch forward kick', hint: 'Forward speed added by a launch', min: 0, max: 200, step: 5 },
+      { key: 'railReach', label: 'Rail reach', hint: 'Rails grab harder within this distance, px', min: 0, max: 80, step: 2 },
+      { key: 'neutralPull', label: 'Neutral zone pull', hint: 'Share of the pull left inside neutral zones', min: 0, max: 1, step: 0.02 },
+      { key: 'tunnelGrip', label: 'Tunnel wall grip', hint: 'Speed kept while scraping a tunnel wall', min: 0.3, max: 1, step: 0.05 },
     ],
   },
   {
-    title: 'Run',
+    title: 'Gates',
     sliders: [
-      { key: 'cameraSpeed', label: 'Screen push', hint: 'Slowest the screen scrolls, so you can\u2019t hang forever', min: 0, max: 160, step: 5 },
-      { key: 'shieldRecharge', label: 'Shield recharge', hint: 'Gates to clear before the shield is back', min: 1, max: 15, step: 1 },
+      { key: 'gateGap', label: 'Gap between gates', hint: 'Scales the space between gates (new gates only)', min: 0.6, max: 1.8, step: 0.05 },
+      { key: 'backBounce', label: 'Knock-back', hint: 'Backward speed when you hit a gate face', min: 40, max: 300, step: 5 },
+      { key: 'bounce', label: 'Bounciness', hint: 'Bounce off iron, paddles and the pendulum', min: 0, max: 1, step: 0.05 },
     ],
   },
   {
     title: 'Feel',
     sliders: [
-      { key: 'juice', label: 'Effects', hint: 'Shake, flashes and zoom', min: 0, max: 2, step: 0.1 },
+      { key: 'juice', label: 'Effects', hint: 'Shake, flashes and camera kicks', min: 0, max: 2, step: 0.1 },
       { key: 'volume', label: 'Volume', hint: 'Master volume', min: 0, max: 1.5, step: 0.05 },
-      { key: 'showZones', label: 'Show zone edges', hint: 'Outline where each pull starts', min: 0, max: 1, step: 1, zones: true, toggle: true },
+      { key: 'showZones', label: 'Show field zones', hint: 'Outline rail reach and neutral zones', min: 0, max: 1, step: 1, toggle: true },
     ],
   },
 ];
 
-export const TUNE_KEY = 'magnetdrop.endless-tuner.settings';
+export const TUNE_KEY = 'magnetdrop.proto-b.settings';
 
 export const TUNE: Tune = { ...DEFAULTS };
 

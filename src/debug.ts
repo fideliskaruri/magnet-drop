@@ -1,69 +1,66 @@
-import { isPanelOpen } from './panel.ts';
-import { TUNE, type Tune } from './tune.ts';
-import { zoneClashes } from './zones.ts';
+import { events, summary, type Summary } from './analytics.ts';
 import { audioStats, renderOffline, SOUND_NAMES, type AudioStats, type RenderResult, type SoundName } from './audio.ts';
 import type { Game } from './game.ts';
-import { GateStream } from './gates.ts';
-import type { GateSpec } from './types.ts';
+import { catalogue, GateStream } from './gates.ts';
+import { isPanelOpen } from './panel.ts';
+import { pullAccel, zoneAt } from './physics.ts';
+import { TUNE, type Tune } from './tune.ts';
+import type { GateSpec, Polarity } from './types.ts';
+
+export interface Snapshot {
+  state: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  /** Vertical field acceleration right now (negative = up). */
+  ay: number;
+  polarity: Polarity;
+  stuck: boolean;
+  /** -1 stuck to something above, +1 below, 0 free. */
+  stuckDir: number;
+  score: number;
+  best: number;
+  camX: number;
+  /** Orb x on screen (px from the left edge of the playfield). */
+  screenX: number;
+  speed: number;
+  t: number;
+  gatesCleared: number;
+  streak: number;
+  centres: number;
+  launches: number;
+  knocks: number;
+  flips: number;
+  deathCause: string;
+  hint: string;
+  /** Next gate the orb hasn't passed. */
+  gate: number | null;
+  family: string | null;
+  gateX: number | null;
+}
 
 export interface DebugHook {
-  snapshot(): {
-    state: string;
-    x: number;
-    y: number;
-    vx: number;
-    vy: number;
-    polarity: string;
-    stuck: boolean;
-    score: number;
-    best: number;
-    camY: number;
-    launches: number;
-    /** Gate the orb is in (index, family, tier, top and pass line). */
-    gate: number | null;
-    family: string | null;
-    tier: number | null;
-    gateTop: number | null;
-    passY: number | null;
-    magnets: number;
-    spikes: number;
-    shield: boolean;
-    grace: number;
-    shieldsUsed: number;
-  };
-  /** Fix the seed and pin the first gates for the next run. `shield: false` starts it without a shield. */
-  setup(seed: number, forcedGates?: GateSpec[], shield?: boolean): void;
+  snapshot(): Snapshot;
+  gates(): { index: number; family: string; v: number[]; x: number; width: number; keyX: number; scored: boolean; centre: boolean | null; touched: boolean }[];
+  /** Fix the seed (null = random) and pin the first gates for the next run. */
+  setup(seed: number | null, forcedGates?: GateSpec[]): void;
+  /** Move the orb (teleport, for tests). */
+  place(x: number, y: number, vx?: number, vy?: number): void;
   /** The first n gate specs a seed would generate. */
   preview(seed: number, n: number): GateSpec[];
-  /** Milliseconds of update + render work per frame, oldest first (last 600 frames). */
+  catalogue(): GateSpec[];
   frameWork(): number[];
   resetFrameWork(): void;
-  /** Slow motion for frame-by-frame screenshots (dev only). */
   setTimeScale(s: number): void;
-  /** Force a minimum intensity, as if deep in a run. */
-  setHeatFloor(h: number): void;
-  /** Fire every effect repeatedly to stress the frame budget. */
   setStress(on: boolean): void;
-  juice(): {
-    heat: number;
-    reduced: boolean;
-    maxShakePx: number;
-    maxFlashAlpha: number;
-    maxZoomDev: number;
-    flashTimes: number[];
-    particles: number;
-    nearMisses: number;
-    chain: number;
-  };
+  juice(): { reduced: boolean; maxShakePx: number; maxFlashAlpha: number; flashTimes: number[]; particles: number };
   resetJuiceStats(): void;
-  /** Live tunables plus the fitted zones of every live magnet. */
-  tune(): { values: Tune; reaches: number[]; clashes: number; paused: boolean };
+  tune(): { values: Tune; paused: boolean };
+  analytics(): { events: Record<string, unknown>[]; summary: Summary };
   audio(): AudioStats;
-  /** Every sound and layer the engine can make, for offline rendering. */
   soundNames(): readonly SoundName[];
-  /** Render one sound through the full output chain in an OfflineAudioContext. */
   renderSound(name: SoundName): Promise<RenderResult>;
-  /** The levels the continuous layers are following right now. */
   mix(): { attract: number; repel: number; stuck: number; speed: number; danger: number };
 }
 
@@ -85,44 +82,70 @@ export function recordFrameWork(ms: number): void {
 /** Dev-only read access for browser tests. Not included in production builds. */
 export function installDebugHook(game: Game): void {
   window.__md = {
-    tune() {
-      return { values: { ...TUNE }, reaches: game.world.magnets.map((m) => m.reach), clashes: zoneClashes(game.world.magnets).length, paused: isPanelOpen() };
-    },
     snapshot() {
-      const g = game.world.gateAt(game.orb.y);
+      const o = game.orb;
+      const sim = game.sim;
+      const g = game.world.upcoming(o.x);
       return {
         state: game.state,
-        x: game.orb.x,
-        y: game.orb.y,
-        vx: game.orb.vx,
-        vy: game.orb.vy,
-        polarity: game.orb.polarity,
-        stuck: game.orb.stuck !== null,
+        x: o.x,
+        y: o.y,
+        vx: o.vx,
+        vy: o.vy,
+        ay: pullAccel(o, zoneAt(sim.gates, o.x, o.y)),
+        polarity: o.polarity,
+        stuck: o.stuck !== null,
+        stuckDir: o.stuck ? o.stuck.dir : 0,
         score: game.score,
         best: game.best,
-        camY: game.camY,
+        camX: sim.camX,
+        screenX: o.x - sim.camX,
+        speed: sim.speed,
+        t: sim.t,
+        gatesCleared: game.gatesCleared,
+        streak: game.streak,
+        centres: game.centres,
         launches: game.launches,
+        knocks: game.knocks,
+        flips: game.flips,
+        deathCause: game.deathCause,
+        hint: game.hint,
         gate: g ? g.index : null,
         family: g ? g.spec.family : null,
-        tier: g ? g.spec.tier : null,
-        gateTop: g ? g.top : null,
-        passY: g ? g.passY : null,
-        magnets: game.world.magnets.length,
-        spikes: game.world.spikes.length,
-        shield: game.shield,
-        grace: game.grace,
-        shieldsUsed: game.shieldsUsed,
+        gateX: g ? g.x : null,
       };
     },
-    setup(seed, forcedGates = [], shield = true) {
+    gates() {
+      return game.world.gates.map((g) => ({
+        index: g.index,
+        family: g.spec.family,
+        v: g.spec.v.slice(),
+        x: g.x,
+        width: g.width,
+        keyX: g.keyX,
+        scored: g.scored,
+        centre: g.centre,
+        touched: g.touched,
+      }));
+    },
+    setup(seed, forcedGates = []) {
       game.seedOverride = seed;
       game.forcedGates = forcedGates;
-      game.startShield = shield;
+      if (game.state === 'ready') game.resetRun();
+    },
+    place(x, y, vx, vy) {
+      const o = game.orb;
+      o.x = o.prevX = x;
+      o.y = o.prevY = y;
+      if (vx !== undefined) o.vx = vx;
+      if (vy !== undefined) o.vy = vy;
+      o.stuck = null;
     },
     preview(seed, n) {
       const s = new GateStream(seed);
-      return Array.from({ length: n }, () => s.next());
+      return Array.from({ length: n }, (_, i) => s.next(i));
     },
+    catalogue,
     frameWork() {
       return [...work];
     },
@@ -132,28 +155,22 @@ export function installDebugHook(game: Game): void {
     setTimeScale(s) {
       debugState.timeScale = s;
     },
-    setHeatFloor(h) {
-      game.heatFloor = h;
-    },
     setStress(on) {
       game.stress = on;
     },
     juice() {
       const fx = game.fx;
-      return {
-        heat: game.heat,
-        reduced: fx.reduced,
-        maxShakePx: fx.maxShakePx,
-        maxFlashAlpha: fx.maxFlashAlpha,
-        maxZoomDev: fx.maxZoomDev,
-        flashTimes: [...fx.flashTimes],
-        particles: fx.particleCount,
-        nearMisses: game.nearMisses,
-        chain: game.chain,
-      };
+      return { reduced: fx.reduced, maxShakePx: fx.maxShakePx, maxFlashAlpha: fx.maxFlashAlpha, flashTimes: [...fx.flashTimes], particles: fx.particleCount };
     },
     resetJuiceStats() {
       game.fx.resetStats();
+    },
+    tune() {
+      return { values: { ...TUNE }, paused: isPanelOpen() };
+    },
+    analytics() {
+      const list = events();
+      return { events: list as unknown as Record<string, unknown>[], summary: summary(list) };
     },
     audio: audioStats,
     soundNames: () => SOUND_NAMES,

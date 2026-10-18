@@ -1,62 +1,54 @@
-import { FIRST_GATE_TOP, VIEW_H } from './config.ts';
-import { GateStream, placeGate } from './gates.ts';
-import type { GateSpec, Magnet, PlacedGate, SpikeRow } from './types.ts';
-import { fitZones } from './zones.ts';
+import { FIRST_GATE_X, GATE_SPACING, TUTORIAL_GATES, VIEW_W } from './config.ts';
+import { buildGate, GateStream, tierOf } from './gates.ts';
+import { TUNE } from './tune.ts';
+import type { Gate, GateSpec } from './types.ts';
 
+/** Space between gates in the tutorial; the last tutorial gate gets extra room as a breather. */
+const TUTORIAL_SPACING = 320;
+const AFTER_TUTORIAL = 460;
+const SPAWN_AHEAD = 520;
+const CULL_BEHIND = 240;
+
+/** Spawns gates ahead of the camera and drops them once they are well behind. */
 export class World {
-  placed: PlacedGate[] = [];
-  magnets: Magnet[] = [];
-  spikes: SpikeRow[] = [];
-  private readonly stream: GateStream;
-  private count = 0;
-  private nextTop = FIRST_GATE_TOP;
-  private scored = 0;
+  readonly gates: Gate[] = [];
+  private stream = new GateStream(1);
+  private nextIndex = 0;
+  private nextX = FIRST_GATE_X;
+  private forced: readonly GateSpec[] = [];
 
-  /** `forced` pins the first gate specs (used by browser checks). */
-  constructor(seed: number, forced: GateSpec[] = []) {
-    this.stream = new GateStream(seed, forced);
+  reset(seed: number, forced: readonly GateSpec[] = []): void {
+    this.gates.length = 0;
+    this.stream = new GateStream(seed);
+    this.nextIndex = 0;
+    this.nextX = FIRST_GATE_X;
+    this.forced = forced;
+    this.update(0);
   }
 
-  /** Keep gates spawned two screens below the camera and drop ones well above it. */
-  update(camY: number): void {
-    let changed = false;
-    while (this.nextTop < camY + VIEW_H * 2) {
-      const g = placeGate(this.count++, this.stream.next(), this.nextTop);
-      // Fit against the gate above too, so zones never touch across the spacing.
-      fitZones(this.placed[this.placed.length - 1]?.magnets ?? [], g.magnets);
-      this.nextTop = g.nextTop;
-      this.placed.push(g);
-      changed = true;
+  update(camX: number): void {
+    while (this.nextX < camX + VIEW_W + SPAWN_AHEAD) {
+      const i = this.nextIndex;
+      const forced = this.forced[i];
+      const spec = forced ? { ...forced, v: forced.v.slice() } : this.stream.next(i);
+      if (forced) this.stream.next(i);
+      const g = buildGate(spec, i, this.nextX);
+      this.gates.push(g);
+      this.nextIndex++;
+      this.nextX = g.x + g.width + this.spacingAfter(i);
     }
-    const before = this.placed.length;
-    this.placed = this.placed.filter((p) => p.top + p.height > camY - 200);
-    if (changed || this.placed.length !== before) {
-      this.magnets = this.placed.flatMap((p) => p.magnets);
-      this.spikes = this.placed.flatMap((p) => p.spikes);
-    }
+    while (this.gates.length && this.gates[0]!.x + this.gates[0]!.width < camX - CULL_BEHIND) this.gates.shift();
   }
 
-  /** Re-fit every live magnet after a zone setting changes. */
-  refit(): void {
-    fitZones([], this.magnets);
+  spacingAfter(index: number): number {
+    if (index < TUTORIAL_GATES - 1) return TUTORIAL_SPACING;
+    if (index === TUTORIAL_GATES - 1) return AFTER_TUTORIAL;
+    return (GATE_SPACING[tierOf(index)] ?? GATE_SPACING[0]) * TUNE.gateGap;
   }
 
-  gate(index: number): PlacedGate | undefined {
-    return this.placed.find((p) => p.index === index);
-  }
-
-  gateAt(y: number): PlacedGate | undefined {
-    for (let i = this.placed.length - 1; i >= 0; i--) if (y >= this.placed[i]!.top) return this.placed[i];
-    return undefined;
-  }
-
-  /** How many barriers the orb has newly dropped below now that it is at `y`. One point each. */
-  passed(y: number): number {
-    let n = 0;
-    for (let g = this.gate(this.scored); g && y > g.passY; g = this.gate(this.scored)) {
-      this.scored++;
-      n++;
-    }
-    return n;
+  /** The next gate the orb hasn't passed yet. */
+  upcoming(x: number): Gate | null {
+    for (const g of this.gates) if (g.x + g.width >= x) return g;
+    return null;
   }
 }

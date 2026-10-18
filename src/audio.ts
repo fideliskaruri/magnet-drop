@@ -23,7 +23,8 @@ export interface Mix {
 
 export const SILENT_MIX: Readonly<Mix> = { attract: 0, repel: 0, stuck: 0, stuckTime: 0, speed: 0, danger: 0 };
 
-export type DeathCause = 'spikes' | 'stall';
+/** 'camera' = pushed off the left edge, 'hazard' = machinery or crushed. */
+export type DeathCause = 'camera' | 'hazard';
 
 const PENTA = [0, 3, 5, 7, 10] as const;
 
@@ -307,6 +308,17 @@ export class SoundEngine {
     this.tone(v, red ? 'square' : 'triangle', f, f, 0.2, red ? 0.12 : 0.2, 0.01);
     this.tone(v, 'sine', f * 2, f * 2, 0.09, 0.07, 0.01);
     this.hiss(v, 'highpass', 5000, 5000, 0.7, 0.025, 0.07);
+    this.bend(red ? 300 : -300);
+  }
+
+  /** Brief pitch shift of the field hum on a flip. Automates existing params, so no nodes are created. */
+  private bend(cents: number): void {
+    const t = this.ctx.currentTime;
+    for (const o of [this.layer.humA, this.layer.humB]) {
+      o.detune.cancelScheduledValues(t);
+      o.detune.setValueAtTime(cents, t);
+      o.detune.setTargetAtTime(0, t + 0.01, 0.06);
+    }
   }
 
   /** Stick: a heavy magnetic clank. Harder hits are louder and lower. */
@@ -358,11 +370,11 @@ export class SoundEngine {
     }
   }
 
-  /** Death: spikes crunch, a stall gets swallowed. Both end on a falling minor sigh. */
+  /** Death: machinery crunches, being pushed off the edge gets swallowed. Both end on a falling minor sigh. */
   death(cause: DeathCause): void {
     const v = this.begin('death', 0.2, 0, true);
     if (!v) return;
-    if (cause === 'spikes') {
+    if (cause === 'hazard') {
       this.hiss(v, 'bandpass', 2400, 180, 0.9, 0.5, 0.7);
       this.tone(v, 'sawtooth', 240, 32, 0.5, 0.2);
       this.tone(v, 'sawtooth', 247, 30, 0.5, 0.2);
@@ -387,7 +399,7 @@ export class SoundEngine {
     for (let k = 0; k < 3; k++) this.tone(v, 'triangle', noteHz(5 + k * 2), noteHz(5 + k * 2), 0.16, 0.14, k * 0.055);
   }
 
-  /** Dropping through a gate: a short bright two-note blip. */
+  /** Clearing a gate: a short bright two-note blip. */
   gate(pan: number): void {
     const v = this.begin('gate', 0.05, pan);
     if (!v) return;
@@ -418,30 +430,28 @@ export class SoundEngine {
     }
   }
 
-  /** Surviving a close pass by spikes: a whoosh and a bright ting. */
-  nearMiss(pan: number): void {
-    const v = this.begin('near-miss', 0.4, pan);
+  /** Centre-pass bonus: a bright ting on top of the gate blip. */
+  centre(pan: number): void {
+    const v = this.begin('centre', 0.1, pan);
     if (!v) return;
-    this.hiss(v, 'highpass', 1500, 6000, 0.8, 0.16, 0.18, 0, 0.03);
     this.tone(v, 'sine', noteHz(17), noteHz(17), 0.3, 0.07, 0.04);
     this.tone(v, 'sine', noteHz(19), noteHz(19), 0.35, 0.06, 0.1);
   }
 
-  /** Shield breaks: a glassy crack and a falling chime. */
-  shieldBreak(pan: number): void {
-    const v = this.begin('shield-break', 0.2, pan, true);
+  /** A repulsion door parting: a short servo whine and an air release. */
+  door(open: boolean, pan: number): void {
+    const v = this.begin('door', 0.25, pan);
     if (!v) return;
-    this.hiss(v, 'highpass', 6000, 2500, 0.9, 0.18, 0.3);
-    this.tone(v, 'triangle', noteHz(15), noteHz(10), 0.3, 0.16);
-    this.tone(v, 'sine', noteHz(12) * 2.76, noteHz(12) * 2.2, 0.25, 0.05);
+    this.tone(v, 'sawtooth', open ? 180 : 260, open ? 260 : 170, 0.16, 0.1);
+    this.hiss(v, 'bandpass', open ? 900 : 1800, open ? 2600 : 700, 1.2, 0.18, 0.12, 0, 0.02);
   }
 
-  /** Shield recharged: two rising bell notes. */
-  shieldReady(): void {
-    const v = this.begin('shield-ready', 0.5, 0);
+  /** Heavy machinery swinging (pinball paddles, the pendulum): a low iron creak. */
+  machine(pan: number): void {
+    const v = this.begin('machine', 0.2, pan);
     if (!v) return;
-    this.tone(v, 'sine', noteHz(10), noteHz(10), 0.3, 0.1);
-    this.tone(v, 'sine', noteHz(12), noteHz(12), 0.4, 0.1, 0.08);
+    this.tone(v, 'triangle', 90, 70, 0.22, 0.12);
+    this.hiss(v, 'bandpass', 600, 400, 3, 0.2, 0.08, 0, 0.03);
   }
 }
 
@@ -550,7 +560,7 @@ export function haptic(pattern: number | number[]): void {
 
 // ---------- offline rendering (used by verify) ----------
 
-export const SOUND_NAMES = ['flip-blue', 'flip-red', 'flip-combo', 'stick', 'bounce', 'wall', 'launch', 'launch-chain', 'death-spikes', 'death-stall', 'start', 'gate', 'milestone', 'best', 'near-miss', 'shield-break', 'shield-ready', 'layer-hum', 'layer-repel', 'layer-stuck', 'layer-wind', 'layer-danger', 'everything'] as const;
+export const SOUND_NAMES = ['flip-blue', 'flip-red', 'flip-combo', 'stick', 'bounce', 'wall', 'launch', 'launch-chain', 'death-hazard', 'death-camera', 'start', 'gate', 'centre', 'door', 'machine', 'milestone', 'best', 'layer-hum', 'layer-repel', 'layer-stuck', 'layer-wind', 'layer-danger', 'everything'] as const;
 export type SoundName = (typeof SOUND_NAMES)[number];
 
 function trigger(e: SoundEngine, name: SoundName): void {
@@ -564,15 +574,15 @@ function trigger(e: SoundEngine, name: SoundName): void {
     case 'wall': return e.wall(1, -1);
     case 'launch': return e.launch(0, 0);
     case 'launch-chain': return e.launch(AUDIO.launchChainMax, 0);
-    case 'death-spikes': return e.death('spikes');
-    case 'death-stall': return e.death('stall');
+    case 'death-hazard': return e.death('hazard');
+    case 'death-camera': return e.death('camera');
     case 'start': return e.start();
     case 'gate': return e.gate(0);
     case 'milestone': return e.milestone(3);
     case 'best': return e.best();
-    case 'near-miss': return e.nearMiss(0);
-    case 'shield-break': return e.shieldBreak(0);
-    case 'shield-ready': return e.shieldReady();
+    case 'centre': return e.centre(0);
+    case 'door': return e.door(true, 0);
+    case 'machine': return e.machine(0);
     case 'layer-hum': return e.setMix({ ...SILENT_MIX, attract: 1 });
     case 'layer-repel': return e.setMix({ ...SILENT_MIX, repel: 1 });
     case 'layer-stuck': return e.setMix({ ...SILENT_MIX, stuck: 1, stuckTime: 4 });
@@ -581,7 +591,7 @@ function trigger(e: SoundEngine, name: SoundName): void {
     case 'everything':
       // Worst case: every layer flat out with every one-shot fired at once.
       e.setMix(full);
-      e.death('spikes');
+      e.death('hazard');
       e.launch(AUDIO.launchChainMax, 0);
       e.stick(1, 'blue', 0);
       e.flip('red', AUDIO.comboMax, 0);
@@ -589,7 +599,9 @@ function trigger(e: SoundEngine, name: SoundName): void {
       e.wall(1, 0);
       e.milestone(0);
       e.best();
-      e.nearMiss(0);
+      e.centre(0);
+      e.door(true, 0);
+      e.machine(0);
       return;
   }
 }

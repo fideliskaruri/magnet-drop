@@ -1,35 +1,27 @@
+import { track } from './analytics.ts';
 import { haptic, SILENT_MIX, sound, unlockAudio, type DeathCause, type Mix } from './audio.ts';
 import {
+  ANCHOR,
   AUDIO,
   AUTO_READY,
   BEST_KEY,
-  CAMERA_ANCHOR,
-  CAMERA_MIN_SPEED_DELAY,
+  CENTRE_BAND,
   COLORS,
-  DEATH_FREEZE,
+  FLOOR,
   JUICE,
   ORB_RADIUS,
   RESTART_LOCK,
-  SHIELD_GRACE,
-  SHIELD_HITSTOP,
-  SHIELD_HOP,
-  VIEW_H,
+  SPEED_EASE,
+  TIER_SPEED,
+  TUTORIAL_GATES,
   VIEW_W,
 } from './config.ts';
 import { Fx, P_SPARK } from './fx.ts';
-import { attracts, closestPoint, fieldU, flip, hitsSpikes, step, touchingSpikes } from './physics.ts';
-import type { GameStateName, GateSpec, Orb, SpikeRow } from './types.ts';
+import { tierOf, TUTORIAL_HINTS } from './gates.ts';
+import { contact, dirOf, flip, freeSpan, makeOrb, step, zoneAt, type Sim } from './physics.ts';
 import { TUNE } from './tune.ts';
+import type { GameStateName, Gate, GateSpec, Orb, Polarity } from './types.ts';
 import { World } from './world.ts';
-
-const NO_SPIKES: readonly SpikeRow[] = [];
-
-/** Edge-to-edge gap between the orb and a spike row's bounding box. */
-function spikeGap(row: SpikeRow, x: number, y: number): number {
-  const dx = Math.max(row.x - x, 0, x - (row.x + row.w));
-  const dy = Math.max(row.y - y, 0, y - (row.y + row.h));
-  return Math.hypot(dx, dy) - ORB_RADIUS;
-}
 
 function loadBest(): number {
   try {
@@ -39,409 +31,302 @@ function loadBest(): number {
   }
 }
 
+const colorOf = (p: Polarity): string => (p === 'red' ? COLORS.red : COLORS.blue);
+
 export class Game {
   state: GameStateName = 'ready';
-  orb: Orb = Game.freshOrb();
-  world = new World(1);
-  fx = new Fx();
-  camY = 0;
-  prevCamY = 0;
+  readonly world = new World();
+  sim: Sim = { orb: makeOrb(0, 0, 'blue'), t: 0, camX: 0, speed: 0, gates: this.world.gates };
+  readonly fx = new Fx();
   score = 0;
   best = loadBest();
-  stateTime = 0;
-  runTime = 0;
-  hitstop = 0;
-  exploded = false;
+  gatesCleared = 0;
+  /** Consecutive gates cleared without touching any machinery. */
+  streak = 0;
+  bestStreak = 0;
+  centres = 0;
   launches = 0;
-  /** 0..1, rises with depth, speed and launch chains. Drives visual intensity only. */
-  heat = 0;
-  /** Dev hook: minimum heat (for screenshots of deep runs). */
-  heatFloor = 0;
-  chain = 0;
-  nearMisses = 0;
-  /** Dev hook: fire every effect continuously to measure the frame budget. */
-  stress = false;
-  deathCause: DeathCause = 'spikes';
-  shield = true;
-  /** Seconds left of passing harmlessly through spikes after the shield breaks. */
-  grace = 0;
-  shieldsUsed = 0;
-  private sinceShield = 0;
-  startShield = true;
-  /** Set by the dev hook to make runs reproducible. */
+  knocks = 0;
+  flips = 0;
+  hitstop = 0;
+  /** Camera x before the last step, so the renderer can interpolate it. */
+  prevCamX = 0;
+  stateTime = 0;
+  deathCause: DeathCause = 'camera';
+  deathGate: Gate | null = null;
+  newBest = false;
+  /** Short hint shown for the tutorial gate ahead. */
+  hint = 'TAP TO START';
+  /** Seconds since the last knock (drives the repel buzz). */
+  sinceKnock = 10;
+  /** Dev hook: reproducible runs. */
   seedOverride: number | null = null;
   forcedGates: GateSpec[] = [];
-  /** The spike row that killed the orb (rendered white hot). */
-  deathRow: SpikeRow | null = null;
-  private taps = 0;
-  private trailTick = 0;
-  private lastLaunchAt = -10;
-  private nextMilestone: number = JUICE.milestoneEvery;
-  private nearRow: SpikeRow | null = null;
-  private nearCooldown = 0;
-  private stressClock = 0;
-  // Sound state: these only drive audio and never touch the simulation.
-  private readonly mixOut: Mix = { ...SILENT_MIX };
-  private stuckTime = 0;
-  private lastFlipAt = -1;
+  /** Dev hook: fire effects continuously to measure the frame budget. */
+  stress = false;
+  /** performance.now() of the last death, for the restart analytics. */
+  private deathAtMs: number | null = null;
+  private runStartMs = 0;
   private combo = 0;
-  private lastSoundLaunchAt = -1;
-  private launchChain = 0;
-  private nextSoundMilestone: number = AUDIO.milestoneEvery;
-  private bestAtStart = 0;
-  private passedBest = false;
-  private nearArmed = false;
+  private lastFlipT = -10;
+  private chain = 0;
+  private lastLaunchT = -10;
+  private bestCued = false;
+  private stuckTime = 0;
+  private trailTick = 0;
 
-  private static freshOrb(): Orb {
-    const x = VIEW_W / 2;
-    return { x, y: 0, vx: 0, vy: 0, prevX: x, prevY: 0, polarity: 'blue', stuck: null };
+  constructor() {
+    this.resetRun();
+  }
+
+  get orb(): Orb {
+    return this.sim.orb;
+  }
+
+  /** Fresh world with the orb resting on the floor rail. */
+  resetRun(): void {
+    const seed = this.seedOverride ?? Math.floor(Math.random() * 2 ** 31);
+    this.world.reset(seed, this.forcedGates);
+    const orb = makeOrb(ANCHOR * VIEW_W, FLOOR - ORB_RADIUS, 'blue');
+    orb.stuck = { dir: 1, shape: null };
+    this.sim = { orb, t: 0, camX: 0, speed: TUNE.baseSpeed, gates: this.world.gates };
+    this.fx.reset();
+    this.score = this.gatesCleared = this.streak = this.bestStreak = this.centres = 0;
+    this.launches = this.knocks = this.flips = 0;
+    this.hitstop = 0;
+    this.prevCamX = 0;
+    this.stateTime = 0;
+    this.deathGate = null;
+    this.newBest = false;
+    this.bestCued = false;
+    this.combo = this.chain = 0;
+    this.stuckTime = 0;
+    this.sinceKnock = 10;
+    this.hint = 'TAP TO START';
   }
 
   tap(): void {
     unlockAudio();
-    this.taps++;
+    if (this.state === 'ready') this.start();
+    else if (this.state === 'playing') this.doFlip();
+    else if (this.state === 'dying' && this.stateTime >= RESTART_LOCK) {
+      this.resetRun();
+      this.start();
+    }
   }
 
-  private startRun(): void {
-    const seed = this.seedOverride ?? Math.floor(Math.random() * 2 ** 31);
-    this.world = new World(seed, this.forcedGates);
-    this.orb = Game.freshOrb();
-    this.camY = this.prevCamY = this.orb.y - VIEW_H * CAMERA_ANCHOR;
-    this.world.update(this.camY);
-    this.fx.reset();
-    this.score = 0;
-    this.runTime = 0;
-    this.hitstop = 0;
-    this.launches = 0;
-    this.exploded = false;
-    this.heat = 0;
-    this.chain = 0;
-    this.nearMisses = 0;
-    this.lastLaunchAt = -10;
-    this.nextMilestone = JUICE.milestoneEvery;
-    this.nearRow = null;
-    this.nearCooldown = 0;
-    this.deathRow = null;
-    this.stuckTime = 0;
-    this.lastFlipAt = -1;
-    this.combo = 0;
-    this.lastSoundLaunchAt = -1;
-    this.launchChain = 0;
-    this.nextSoundMilestone = AUDIO.milestoneEvery;
-    this.bestAtStart = this.best;
-    this.passedBest = false;
-    this.nearArmed = false;
-    this.deathCause = 'spikes';
-    this.shield = this.startShield;
-    this.grace = 0;
-    this.shieldsUsed = 0;
-    this.sinceShield = 0;
-    this.setState('playing');
-    this.fx.onStart(this.orb.x, this.orb.y, this.color());
-    sound()?.start();
-  }
-
-  private setState(s: GameStateName): void {
-    this.state = s;
+  private start(): void {
+    if (this.deathAtMs !== null) {
+      track('restart', { msSinceDeath: Math.round(performance.now() - this.deathAtMs) });
+      this.deathAtMs = null;
+    }
+    track('run_start', {});
+    this.runStartMs = performance.now();
+    this.state = 'playing';
     this.stateTime = 0;
-  }
-
-  private die(cause: DeathCause, row: SpikeRow | null): void {
-    if (this.state !== 'playing') return;
-    this.deathCause = cause;
-    this.setState('dying');
-    this.orb.stuck = null;
-    this.deathRow = row;
-    this.fx.onDeathHit();
-    haptic([30, 40, 30]);
-    if (this.score > this.best) {
-      this.best = this.score;
-      try {
-        localStorage.setItem(BEST_KEY, String(this.best));
-      } catch {
-        // Private mode can block storage; the best score just won't persist.
-      }
-    }
-  }
-
-  update(dt: number): void {
-    this.prevCamY = this.camY;
-    this.stateTime += dt;
-    const taps = this.taps;
-    this.taps = 0;
-
-    if (this.state === 'ready') {
-      this.fx.update(dt, 0);
-      if (taps > 0) this.startRun();
-      return;
-    }
-
-    if (this.state === 'dying') {
-      if (!this.exploded && this.stateTime >= DEATH_FREEZE) {
-        this.exploded = true;
-        this.fx.onExplode(this.orb.x, this.orb.y, this.color());
-        sound()?.death(this.deathCause);
-      }
-      this.fx.update(dt, this.heat);
-      if (taps > 0 && this.stateTime >= RESTART_LOCK) this.startRun();
-      else if (this.stateTime >= AUTO_READY) {
-        this.fx.reset();
-        this.setState('ready');
-      }
-      return;
-    }
-
-    // playing
-    for (let i = 0; i < taps; i++) this.doFlip();
-    this.updateHeat(dt);
-    this.fx.update(dt, this.heat);
-    if (this.stress) this.stressTick(dt);
-    if (this.hitstop > 0) {
-      this.hitstop -= dt;
-      this.orb.prevX = this.orb.x;
-      this.orb.prevY = this.orb.y;
-      return;
-    }
-    this.runTime += dt;
-
-    const preSpeed = Math.hypot(this.orb.vx, this.orb.vy);
-    const preVx = this.orb.vx;
-    const preVy = this.orb.vy;
-    if (this.grace > 0) {
-      this.grace -= dt;
-      // Never let the grace run out while the orb is still inside a spike row.
-      if (this.grace <= 0 && touchingSpikes(this.orb, this.world.spikes)) this.grace = dt;
-    }
-    const ev = step(this.orb, this.world.magnets, this.grace > 0 ? NO_SPIKES : this.world.spikes, dt);
-    if (ev === 'dead') {
-      if (!this.shield) {
-        this.die('spikes', this.findHitRow());
-        return;
-      }
-      this.breakShield();
-      return;
-    }
-    const o = this.orb;
-    this.stuckTime = o.stuck ? this.stuckTime + dt : 0;
-    if (ev === 'bounce') sound()?.bounce(preSpeed / AUDIO.impactFull, this.pan());
-    else if (ev === 'wall') sound()?.wall(Math.abs(preVx) / AUDIO.impactFull, this.pan());
-    if (ev === 'stick' && o.stuck) {
-      sound()?.stick(preSpeed / AUDIO.impactFull, o.stuck.magnet.polarity, this.pan());
-      haptic(5);
-      this.fx.onStick(o.x, o.y, o.stuck.nx, o.stuck.ny, this.color(), preSpeed, this.heat);
-      if (preSpeed > JUICE.stickHitstopSpeed) this.hitstop = JUICE.stickHitstop;
-    } else if (ev === 'bounce' || ev === 'wall') {
-      // Impact normal from the velocity change.
-      const dvx = o.vx - preVx;
-      const dvy = o.vy - preVy;
-      const dv = Math.hypot(dvx, dvy);
-      if (dv > 1) this.fx.onBounce(o.x, o.y, dvx / dv, dvy / dv, ev === 'wall' ? COLORS.text : this.color(), dv * 0.6);
-    }
-    this.checkNearMiss(dt);
-
-    if (++this.trailTick % 2 === 0) this.fx.pushTrail(o.x, o.y);
-    if (this.fx.streakTime > 0 && this.trailTick % 4 === 0) this.fx.ghost(o.x, o.y, this.color(), 0.22);
-
-    let cam = Math.max(this.camY, o.y - VIEW_H * CAMERA_ANCHOR);
-    if (this.runTime > CAMERA_MIN_SPEED_DELAY) cam = Math.max(cam, this.camY + TUNE.cameraSpeed * dt);
-    this.camY = cam;
-    if (o.y + ORB_RADIUS < this.camY) {
-      this.die('stall', null);
-      return;
-    }
-    this.world.update(this.camY);
-    // One point per barrier cleared.
-    const passed = this.world.passed(o.y);
-    if (passed > 0) {
-      this.score += passed;
-      this.fx.scorePop = Math.max(this.fx.scorePop, 0.6);
-      sound()?.gate(this.pan());
-    }
-    if (!this.shield && passed > 0) {
-      this.sinceShield += passed;
-      if (this.sinceShield >= TUNE.shieldRecharge) {
-        this.shield = true;
-        this.fx.popup('SHIELD READY', o.x, o.y - 34, COLORS.text, 16, 0.9);
-        this.fx.pulse(o.x, o.y, COLORS.text, 60, 0.35, 3);
-        sound()?.shieldReady();
-      }
-    }
-    if (this.score >= this.nextMilestone) {
-      const m = this.nextMilestone;
-      this.nextMilestone += JUICE.milestoneEvery;
-      this.fx.onMilestone(m, o.x, o.y, this.color(), m % JUICE.bigMilestoneEvery === 0);
-    }
-    this.scoreSounds();
-    this.nearMissCheck();
-  }
-
-  /** A spike hit with the shield up: pop it, hop the orb and let it pass through spikes for a moment. */
-  private breakShield(): void {
-    const o = this.orb;
-    o.stuck = null;
-    o.x = o.prevX;
-    o.y = o.prevY;
-    o.vx *= 0.5;
-    o.vy = -SHIELD_HOP;
-    this.shield = false;
-    this.sinceShield = 0;
-    this.shieldsUsed++;
-    this.grace = SHIELD_GRACE;
-    this.hitstop = SHIELD_HITSTOP;
-    this.fx.popup('SHIELD SAVED YOU', o.x, o.y - 34, COLORS.text, 18, 1.1);
-    this.fx.pulse(o.x, o.y, COLORS.white, 90, 0.4, 6);
-    this.fx.pulse(o.x, o.y, COLORS.text, 160, 0.6, 3, 20, 0.06);
-    this.fx.spray(o.x, o.y, -Math.PI / 2, Math.PI, 22, 160, 420, COLORS.text, P_SPARK, 0.4, 2);
-    this.fx.addTrauma(0.5);
-    this.fx.bigFlash(COLORS.white, 0.5);
-    sound()?.shieldBreak(this.pan());
-    haptic([15, 30, 15]);
-  }
-
-  private updateHeat(dt: number): void {
-    const depth = Math.min(1, this.score / JUICE.heatDepth);
-    const speed = Math.min(1, Math.hypot(this.orb.vx, this.orb.vy) / 700);
-    if (this.runTime - this.lastLaunchAt > JUICE.chainWindow) this.chain = 0;
-    const chainH = Math.min(this.chain, 5) / 5;
-    const target = Math.max(this.heatFloor, Math.min(1, depth * 0.6 + speed * 0.2 + chainH * 0.3));
-    this.heat += (target - this.heat) * Math.min(1, 2 * dt);
-  }
-
-  private findHitRow(): SpikeRow | null {
-    for (const row of this.world.spikes) if (hitsSpikes(row, this.orb.x, this.orb.y, ORB_RADIUS)) return row;
-    return null;
-  }
-
-  /** Grazing a spike row without touching it. Fires once when the orb leaves the danger margin. */
-  private checkNearMiss(dt: number): void {
-    this.nearCooldown = Math.max(0, this.nearCooldown - dt);
-    const o = this.orb;
-    let near: SpikeRow | null = null;
-    if (!o.stuck) {
-      for (const row of this.world.spikes) {
-        if (hitsSpikes(row, o.x, o.y, ORB_RADIUS + JUICE.nearMissMargin)) {
-          near = row;
-          break;
-        }
-      }
-    }
-    const left = this.nearRow;
-    if (left && near !== left && this.nearCooldown <= 0) {
-      const sx = Math.max(left.x, Math.min(o.x, left.x + left.w));
-      const sy = Math.max(left.y, Math.min(o.y, left.y + left.h));
-      this.nearMisses++;
-      this.nearCooldown = JUICE.nearMissCooldown;
-      this.fx.onNearMiss(o.x, o.y, sx, sy);
-      haptic(6);
-    }
-    this.nearRow = near;
-  }
-
-  private stressTick(dt: number): void {
-    this.stressClock += dt;
-    if (this.stressClock < 0.1) return;
-    this.stressClock = 0;
-    const { x, y } = this.orb;
-    const c = this.color();
-    this.fx.onFlip(x, y, c, this.heat);
-    this.fx.onStick(x, y, 0, -1, c, 500, this.heat);
-    this.fx.onLaunch(x, y, 300, -500, c, this.heat, 4);
-    this.fx.onBounce(x, y, 1, 0, c, 400);
-    this.fx.onNearMiss(x, y, x + 20, y);
-    this.fx.onChain(4, x, y, c);
-    this.fx.onMilestone(500, x, y, c, true);
-    this.fx.onExplode(x, y + 80, c);
-    this.fx.slowmo = 0;
-    this.fx.zoomHoldTarget = 0;
-    for (let i = 0; i < 3; i++) this.fx.ghost(x + i * 8, y, c, 0.22);
-  }
-
-  private scoreSounds(): void {
-    while (this.score >= this.nextSoundMilestone) {
-      sound()?.milestone(Math.round(this.nextSoundMilestone / AUDIO.milestoneEvery) - 1);
-      this.nextSoundMilestone += AUDIO.milestoneEvery;
-    }
-    if (!this.passedBest && this.bestAtStart > 0 && this.score > this.bestAtStart) {
-      this.passedBest = true;
-      sound()?.best();
-    }
-  }
-
-  private nearestSpikeGap(): number {
-    let gap = Infinity;
-    for (const row of this.world.spikes) gap = Math.min(gap, spikeGap(row, this.orb.x, this.orb.y));
-    return gap;
-  }
-
-  /** Arm when the orb skims spikes, fire once it has clearly got away. */
-  private nearMissCheck(): void {
-    const gap = this.nearestSpikeGap();
-    if (gap < AUDIO.nearMissGap) this.nearArmed = true;
-    else if (this.nearArmed && gap > AUDIO.nearMissGap * 4) {
-      this.nearArmed = false;
-      sound()?.nearMiss(this.pan());
-    }
+    sound()?.start();
+    this.fx.onStart(this.orb.x, this.orb.y, colorOf('red'));
+    // The first tap is also the first flip: a launch off the floor.
+    this.doFlip();
   }
 
   private pan(): number {
-    return (this.orb.x / VIEW_W) * 2 - 1;
-  }
-
-  /** Levels for the continuous sound layers. Reuses one object, so it allocates nothing per frame. */
-  mix(): Readonly<Mix> {
-    const m = this.mixOut;
-    if (this.state !== 'playing') {
-      Object.assign(m, SILENT_MIX);
-      return m;
-    }
-    let pull = 0;
-    let push = 0;
-    if (!this.orb.stuck) {
-      for (const mag of this.world.magnets) {
-        const { cx, cy } = closestPoint(mag, this.orb.x, this.orb.y);
-        const u = fieldU(mag, Math.hypot(cx - this.orb.x, cy - this.orb.y));
-        if (u <= 0) continue;
-        if (attracts(this.orb.polarity, mag.polarity)) pull = Math.max(pull, u);
-        else push = Math.max(push, u);
-      }
-    }
-    const spike = 1 - Math.max(0, this.nearestSpikeGap()) / AUDIO.spikeDangerRange;
-    const stall = 1 - (this.orb.y - this.camY) / AUDIO.stallDangerRange;
-    m.attract = pull;
-    m.repel = push;
-    m.stuck = this.orb.stuck ? 1 : 0;
-    m.stuckTime = this.stuckTime;
-    m.speed = Math.min(1, Math.hypot(this.orb.vx, this.orb.vy) / TUNE.maxSpeed);
-    m.danger = Math.max(0, Math.min(1, Math.max(spike, stall)));
-    return m;
+    return ((this.orb.x - this.sim.camX) / VIEW_W) * 2 - 1;
   }
 
   private doFlip(): void {
-    const launched = flip(this.orb);
-    const c = this.color();
     const o = this.orb;
-    this.fx.onFlip(o.x, o.y, c, this.heat);
-    const now = this.runTime;
-    this.combo = this.lastFlipAt >= 0 && now - this.lastFlipAt < AUDIO.comboWindow ? Math.min(this.combo + 1, AUDIO.comboMax) : 0;
-    this.lastFlipAt = now;
+    const t = this.sim.t;
+    this.combo = t - this.lastFlipT < AUDIO.comboWindow ? Math.min(this.combo + 1, AUDIO.comboMax) : 0;
+    this.lastFlipT = t;
+    this.flips++;
+    const launched = flip(this.sim);
+    const color = colorOf(o.polarity);
     sound()?.flip(o.polarity, this.combo, this.pan());
+    this.fx.onFlip(o.x, o.y, color);
     if (launched) {
-      this.launchChain = this.lastSoundLaunchAt >= 0 && now - this.lastSoundLaunchAt < AUDIO.launchChainWindow ? Math.min(this.launchChain + 1, AUDIO.launchChainMax) : 0;
-      this.lastSoundLaunchAt = now;
+      this.chain = t - this.lastLaunchT < AUDIO.launchChainWindow ? Math.min(this.chain + 1, AUDIO.launchChainMax) : 0;
+      this.lastLaunchT = t;
       this.launches++;
-      this.chain = this.runTime - this.lastLaunchAt <= JUICE.chainWindow ? this.chain + 1 : 1;
-      this.lastLaunchAt = this.runTime;
       this.hitstop = JUICE.launchHitstop;
-      this.fx.onLaunch(o.x, o.y, o.vx, o.vy, c, this.heat, this.chain);
-      if (this.chain >= 2) this.fx.onChain(this.chain, o.x, o.y, c);
-      sound()?.launch(this.launchChain, this.pan());
+      this.fx.onLaunch(o.x, o.y, o.vx, o.vy, color);
+      sound()?.launch(this.chain, this.pan());
       haptic(20);
     } else {
       haptic(8);
     }
   }
 
-  color(): string {
-    return this.orb.polarity === 'red' ? COLORS.red : COLORS.blue;
+  update(dt: number): void {
+    this.fx.update(dt);
+    this.stateTime += dt;
+    if (this.stress) this.stressFx();
+    if (this.state === 'dying') {
+      if (this.stateTime >= AUTO_READY) {
+        this.resetRun();
+        this.state = 'ready';
+      }
+      return;
+    }
+    if (this.state !== 'playing') return;
+    if (this.hitstop > 0) {
+      this.hitstop -= dt;
+      return;
+    }
+
+    const sim = this.sim;
+    const o = sim.orb;
+    const target = TUNE.baseSpeed * (TIER_SPEED[tierOf(this.gatesCleared)] ?? 1);
+    sim.speed += (target - sim.speed) * (1 - Math.exp(-SPEED_EASE * dt));
+    this.prevCamX = sim.camX;
+    const ev = step(sim, dt);
+    this.world.update(sim.camX);
+    this.sinceKnock += dt;
+    this.stuckTime = o.stuck ? this.stuckTime + dt : 0;
+
+    if (ev === 'camera' || ev === 'hazard') {
+      this.die(ev);
+      return;
+    }
+    const impact = Math.min(1, contact.speed / AUDIO.impactFull);
+    if (ev === 'stick') {
+      const magnet: Polarity = dirOf(o.polarity) < 0 ? 'blue' : 'red';
+      sound()?.stick(impact, magnet, this.pan());
+      this.fx.onStick(contact.x, contact.y, contact.nx, contact.ny, colorOf(magnet), contact.speed);
+    } else if (ev === 'bump') {
+      sound()?.bounce(impact, this.pan());
+      this.fx.onBounce(contact.x, contact.y, contact.nx, contact.ny, '#9aa3b1', contact.speed);
+    } else if (ev === 'knock') {
+      this.knocks++;
+      this.sinceKnock = 0;
+      sound()?.wall(Math.max(0.4, impact), this.pan());
+      this.fx.onBounce(contact.x, contact.y, contact.nx, contact.ny, '#c9d1dc', Math.max(200, contact.speed));
+    }
+
+    this.score_(sim);
+    this.updateHint();
+
+    if (++this.trailTick % 2 === 0) this.fx.pushTrail(o.x, o.y);
+  }
+
+  private score_(sim: Sim): void {
+    const o = sim.orb;
+    for (const g of sim.gates) {
+      if (g.scored) continue;
+      if (g.x > o.x + ORB_RADIUS) break;
+      if (g.centre === null && o.x >= g.keyX) {
+        const span = freeSpan(sim.gates, g.keyX, o.y);
+        const half = (span.bottom - span.top) / 2;
+        g.centre = Math.abs(o.y - (span.top + span.bottom) / 2) <= CENTRE_BAND * half;
+      }
+      if (o.x - ORB_RADIUS > g.x + g.width) this.clear(g);
+    }
+  }
+
+  private clear(g: Gate): void {
+    g.scored = true;
+    const centre = g.centre === true;
+    const clean = !g.touched;
+    this.score += centre ? 2 : 1;
+    this.gatesCleared++;
+    if (centre) this.centres++;
+    this.streak = clean ? this.streak + 1 : 0;
+    this.bestStreak = Math.max(this.bestStreak, this.streak);
+    track('gate_clear', { gate: g.index, type: g.spec.family, clean, centre });
+    const o = this.orb;
+    const pan = this.pan();
+    sound()?.gate(pan);
+    if (centre) sound()?.centre(pan);
+    this.fx.onGate(centre ? '+2 CENTRE' : '+1', o.x, o.y, centre ? COLORS.text : COLORS.dim);
+    if (this.gatesCleared % JUICE.milestoneEvery === 0) {
+      sound()?.milestone(this.gatesCleared / JUICE.milestoneEvery);
+      this.fx.onMilestone(o.x, o.y, colorOf(o.polarity), this.gatesCleared % JUICE.bigMilestoneEvery === 0);
+    }
+    if (!this.bestCued && this.best > 0 && this.score > this.best) {
+      this.bestCued = true;
+      sound()?.best();
+    }
+  }
+
+  private updateHint(): void {
+    const g = this.world.upcoming(this.orb.x);
+    this.hint = g && g.index < TUTORIAL_GATES ? (TUTORIAL_HINTS[g.index] ?? '') : '';
+  }
+
+  private die(cause: DeathCause): void {
+    const o = this.orb;
+    this.state = 'dying';
+    this.stateTime = 0;
+    this.deathCause = cause;
+    this.deathGate = cause === 'hazard' && contact.gate ? contact.gate : this.world.upcoming(o.x);
+    this.deathAtMs = performance.now();
+    track('death', {
+      cause,
+      gate: this.gatesCleared,
+      gateType: this.deathGate?.spec.family ?? 'none',
+      score: this.score,
+      runMs: Math.round(this.deathAtMs - this.runStartMs),
+    });
+    if (this.score > this.best) {
+      this.best = this.score;
+      this.newBest = true;
+      try {
+        localStorage.setItem(BEST_KEY, String(this.best));
+      } catch {
+        // Storage blocked: best lasts for this session only.
+      }
+    }
+    sound()?.death(cause);
+    haptic(cause === 'hazard' ? [30, 40, 30] : 40);
+    const x = cause === 'camera' ? Math.max(o.x, this.sim.camX + 8) : o.x;
+    this.fx.onDeath(x, o.y, colorOf(o.polarity), cause === 'hazard');
+  }
+
+  /** How close the orb is to being pushed off the left edge (0..1). */
+  edgeDanger(): number {
+    const sx = this.orb.x - this.sim.camX;
+    return Math.max(0, Math.min(1, 1 - (sx - ORB_RADIUS) / AUDIO.edgeDangerRange));
+  }
+
+  /** How close the orb is to dangerous machinery (0..1). */
+  hazardDanger(): number {
+    const o = this.orb;
+    let best = 0;
+    for (const g of this.sim.gates) {
+      if (Math.abs(g.x - o.x) > 400) continue;
+      for (const s of g.shapes) {
+        if (s.kind !== 'grinder') continue;
+        const dx = Math.max(s.x - o.x, 0, o.x - (s.x + s.w));
+        const dy = Math.max(s.y - o.y, 0, o.y - (s.y + s.h));
+        const d = Math.hypot(dx, dy) - ORB_RADIUS;
+        best = Math.max(best, 1 - d / AUDIO.hazardDangerRange);
+      }
+    }
+    return Math.max(0, Math.min(1, best));
+  }
+
+  /** Levels for the continuous sound layers. */
+  mix(): Mix {
+    if (this.state !== 'playing') return SILENT_MIX;
+    const o = this.orb;
+    const zone = zoneAt(this.sim.gates, o.x, o.y);
+    return {
+      attract: zone === 1 ? 0.15 : 0.35 + 0.5 * Math.min(1, Math.abs(o.vy) / TUNE.maxVy),
+      repel: Math.max(0, 1 - this.sinceKnock * 3),
+      stuck: o.stuck ? 0.6 : 0,
+      stuckTime: this.stuckTime,
+      speed: Math.min(1, Math.max(0, (o.vx - 100) / 300)),
+      danger: Math.max(this.edgeDanger() * 0.9, this.hazardDanger()),
+    };
+  }
+
+  private stressFx(): void {
+    const o = this.orb;
+    const f = this.fx;
+    f.spray(o.x, o.y, 0, Math.PI, 12, 100, 400, colorOf(o.polarity), P_SPARK, 0.4, 2);
+    f.pulse(o.x, o.y, COLORS.white, 80, 0.3, 3);
+    f.popup('+1', o.x, o.y, COLORS.text, 14);
+    f.bigFlash(COLORS.white, 1);
+    f.addTrauma(0.3);
   }
 }
