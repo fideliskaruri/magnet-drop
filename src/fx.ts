@@ -107,7 +107,7 @@ export class Fx {
 
   // Screen flash.
   flash = 0;
-  flashColor: string = COLORS.white;
+  flashColor: string = COLORS.text;
   lastBigFlash = -10;
   readonly flashTimes: number[] = [];
 
@@ -270,18 +270,18 @@ export class Fx {
 
   onStart(x: number, y: number, color: string): void {
     this.pulse(x, y, color, 260, 0.5, 6);
-    this.pulse(x, y, COLORS.white, 140, 0.35, 3, 11, 0.06);
-    if (!this.reduced) this.zoomPunch = 0.1;
+    this.pulse(x, y, COLORS.text, 140, 0.35, 3, 11, 0.06);
+    if (!this.reduced) this.zoomPunch = 0.04;
     this.orbPop = 1;
     this.popup('GO', x, y + 46, COLORS.text, 26, 0.6);
   }
 
   onFlip(x: number, y: number, color: string, heat: number): void {
-    this.pulse(x, y, color, 34 + heat * 12, 0.16, 3);
-    this.spray(x, y, 0, Math.PI, 6 + Math.round(heat * 6), 80, 200, color, P_SPARK, 0.22, 1.6);
-    this.orbPop = Math.max(this.orbPop, 0.7);
+    this.pulse(x, y, color, 24 + heat * 6, 0.14, 2);
+    this.spray(x, y, 0, Math.PI, 3 + Math.round(heat * 3), 60, 160, color, P_SPARK, 0.2, 1.4);
+    this.orbPop = Math.max(this.orbPop, 0.45);
     this.flipCue = 1;
-    this.addTrauma(0.1 + heat * 0.05);
+    this.addTrauma(0.03);
   }
 
   onStick(x: number, y: number, nx: number, ny: number, color: string, speed: number, heat: number): void {
@@ -289,7 +289,7 @@ export class Fx {
     this.pulse(x - nx * 11, y - ny * 11, color, 30 + hard * 26, 0.2, 3 + hard * 2);
     // Sparks skid both ways along the surface.
     const ta = Math.atan2(nx, -ny);
-    const n = 6 + Math.round(hard * 10 + heat * 6);
+    const n = 4 + Math.round(hard * 6 + heat * 3);
     const sp1 = 320 + hard * 200;
     this.spray(x - nx * 9, y - ny * 9, ta, 0.35, n >> 1, 120, sp1, color, P_SPARK, 0.3, 1.8);
     this.spray(x - nx * 9, y - ny * 9, ta + Math.PI, 0.35, n >> 1, 120, sp1, color, P_SPARK, 0.3, 1.8);
@@ -298,8 +298,8 @@ export class Fx {
     this.squashNx = nx;
     this.squashNy = ny;
     this.orbWhite = 0.05;
-    this.addTrauma(0.12 + hard * 0.2);
-    this.kick(-nx, -ny, 3 + hard * 5);
+    this.addTrauma(0.04 + hard * 0.1);
+    this.kick(-nx, -ny, 2 + hard * 3);
   }
 
   onLaunch(x: number, y: number, vx: number, vy: number, color: string, heat: number, chain: number): void {
@@ -308,10 +308,10 @@ export class Fx {
     const dy = vy / sp;
     const back = Math.atan2(-dy, -dx);
     this.pulse(x, y, color, 70 + heat * 30, 0.3, 6);
-    this.pulse(x, y, COLORS.white, 46 + heat * 20, 0.22, 3, 11, 0.05);
+    this.pulse(x, y, COLORS.text, 46 + heat * 20, 0.22, 3, 11, 0.05);
     this.pulse(x, y, color, 110 + heat * 40, 0.42, 2, 20, 0.1);
-    this.spray(x, y, back, 0.5, 14 + Math.round(heat * 14), 200, 520, color, P_SPARK, 0.35, 2.2);
-    this.spray(x, y, back, 1.2, 8, 60, 200, COLORS.white, P_DOT, 0.35, 2.4);
+    this.spray(x, y, back, 0.5, 10 + Math.round(heat * 6), 200, 480, color, P_SPARK, 0.3, 2);
+    this.spray(x, y, back, 1.2, 8, 60, 200, COLORS.text, P_DOT, 0.35, 2.4);
     this.orbWhite = 0.045;
     this.orbPop = 1;
     this.splitTime = 0.22;
@@ -320,9 +320,9 @@ export class Fx {
     this.streakTime = 0.3;
     this.streakDx = dx;
     this.streakDy = dy;
-    this.addTrauma(0.32 + heat * 0.18 + Math.min(chain, 5) * 0.03);
-    this.kick(dx, dy, 9 + heat * 6);
-    if (!this.reduced) this.zoomPunch = -0.05 - heat * 0.025;
+    this.addTrauma(0.2 + Math.min(chain, 5) * 0.02);
+    this.kick(dx, dy, 5 + heat * 3);
+    if (!this.reduced) this.zoomPunch = -0.02;
   }
 
   onBounce(x: number, y: number, nx: number, ny: number, color: string, speed: number): void {
@@ -330,16 +330,24 @@ export class Fx {
     const s = Math.min(1, speed / 500);
     this.spray(x - nx * 10, y - ny * 10, Math.atan2(ny, nx), 0.9, 4 + Math.round(s * 8), 60, 200 + s * 200, color, P_SPARK, 0.25, 1.6);
     this.pulse(x - nx * 10, y - ny * 10, color, 18 + s * 14, 0.14, 2, 4);
-    this.addTrauma(0.05 + s * 0.12);
-    this.kick(-nx, -ny, 2 + s * 4);
+    this.addTrauma(0.03 + s * 0.07);
+    this.kick(-nx, -ny, 1 + s * 3);
   }
 
   onNearMiss(x: number, y: number, sx: number, sy: number): void {
     const a = Math.atan2(y - sy, x - sx);
-    this.spray(sx, sy, a, 0.8, 10, 120, 320, COLORS.spike, P_SPARK, 0.3, 1.8);
-    this.popup('CLOSE', x, y - 26, COLORS.spike, 16, 0.6);
+    this.spray(sx, sy, a, 0.8, 10, 120, 320, COLORS.hazard, P_SPARK, 0.3, 1.8);
+    this.popup('CLOSE', x, y - 26, COLORS.hazard, 16, 0.6);
     this.addTrauma(0.14);
     this.orbPop = Math.max(this.orbPop, 0.5);
+  }
+
+  onGate(x: number, y: number, color: string, clean: boolean, combo: number): void {
+    this.scorePop = Math.max(this.scorePop, clean ? 0.8 : 0.5);
+    if (clean) {
+      this.pulse(x, y, color, 40, 0.25, 2);
+      this.popup(combo > 1 ? `CLEAN x${combo}` : 'CLEAN +1', x, y - 30, COLORS.text, 14 + Math.min(combo, 6), 0.7);
+    }
   }
 
   onChain(chain: number, x: number, y: number, color: string): void {
@@ -352,8 +360,8 @@ export class Fx {
     this.milestoneAge = 0;
     this.pulse(x, y, color, 420, 0.7, 4, 20);
     this.spray(x, y, 0, Math.PI, 18, 150, 380, COLORS.text, P_DOT, 0.5, 2.2);
-    this.addTrauma(big ? 0.35 : 0.18);
-    if (big) this.bigFlash(color, 0.6);
+    this.addTrauma(big ? 0.2 : 0.1);
+    if (big) this.bigFlash(color, 0.5);
   }
 
   onDeathHit(): void {
@@ -374,13 +382,13 @@ export class Fx {
       this.particle(x, y, Math.cos(a) * sp, Math.sin(a) * sp, 0.9 + Math.random() * 0.5, i % 2 ? color : '#c7d0e6', 5 + Math.random() * 6, P_SHARD, 2, 260);
     }
     this.spray(x, y, 0, Math.PI, 30, 300, 700, color, P_SPARK, 0.45, 2.6);
-    this.pulse(x, y, COLORS.white, 90, 0.3, 8);
+    this.pulse(x, y, COLORS.text, 90, 0.3, 8);
     this.pulse(x, y, color, 170, 0.6, 5, 11, 0.06);
     this.pulse(x, y, color, 300, 0.9, 2, 30, 0.14);
-    this.bigFlash(COLORS.white, 1);
-    this.addTrauma(0.95);
-    if (!this.reduced) this.zoomHoldTarget = 0.1;
-    this.slowmo = 0.7;
+    this.bigFlash(COLORS.text, 0.6);
+    this.addTrauma(0.55);
+    if (!this.reduced) this.zoomHoldTarget = 0.04;
+    this.slowmo = 0.35;
   }
 
   // ---------- Update ----------
@@ -389,7 +397,7 @@ export class Fx {
     this.clock += dt;
     this.heat = heat;
     this.slowmo = Math.max(0, this.slowmo - dt);
-    this.fxTimeScale = this.slowmo > 0 ? 0.3 + 0.7 * (1 - this.slowmo / 0.7) : 1;
+    this.fxTimeScale = this.slowmo > 0 ? 0.4 + 0.6 * (1 - this.slowmo / 0.35) : 1;
     const fdt = dt * this.fxTimeScale;
 
     for (let i = 0; i < this.pulseCount; ) {

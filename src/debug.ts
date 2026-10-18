@@ -4,7 +4,8 @@ import { zoneClashes } from './zones.ts';
 import { audioStats, renderOffline, SOUND_NAMES, type AudioStats, type RenderResult, type SoundName } from './audio.ts';
 import type { Game } from './game.ts';
 import { GateStream } from './gates.ts';
-import type { GateSpec } from './types.ts';
+import type { GateSpec, PlacedGate } from './types.ts';
+import { clearAnalytics, events, flush, summary, type AnalyticsEvent, type Summary } from './analytics.ts';
 
 export interface DebugHook {
   snapshot(): {
@@ -26,13 +27,26 @@ export interface DebugHook {
     gateTop: number | null;
     passY: number | null;
     magnets: number;
-    spikes: number;
-    shield: boolean;
-    grace: number;
-    shieldsUsed: number;
+    saws: number;
+    /** Gates dropped through, clean passes in a row, and the last pass. */
+    cleared: number;
+    combo: number;
+    cleanPasses: number;
+    kicks: number;
+    lastPass: { index: number; clean: boolean; x: number } | null;
+    deathCause: string;
+    /** The next gate to clear (index and family). */
+    next: number | null;
+    nextFamily: string | null;
+    runTime: number;
   };
-  /** Fix the seed and pin the first gates for the next run. `shield: false` starts it without a shield. */
-  setup(seed: number, forcedGates?: GateSpec[], shield?: boolean): void;
+  /** Fix the seed and pin the first gates for the next run. */
+  setup(seed: number, forcedGates?: GateSpec[]): void;
+  /** Live gates near the camera with their solids, magnets, saws and machine state. */
+  gates(): PlacedGate[];
+  /** Local analytics: raw events and the summary the panel shows. */
+  analytics(): { events: AnalyticsEvent[]; summary: Summary };
+  clearAnalytics(): void;
   /** The first n gate specs a seed would generate. */
   preview(seed: number, n: number): GateSpec[];
   /** Milliseconds of update + render work per frame, oldest first (last 600 frames). */
@@ -108,17 +122,30 @@ export function installDebugHook(game: Game): void {
         gateTop: g ? g.top : null,
         passY: g ? g.passY : null,
         magnets: game.world.magnets.length,
-        spikes: game.world.spikes.length,
-        shield: game.shield,
-        grace: game.grace,
-        shieldsUsed: game.shieldsUsed,
+        saws: game.world.saws.length,
+        cleared: game.cleared,
+        combo: game.combo,
+        cleanPasses: game.cleanPasses,
+        kicks: game.kicks,
+        lastPass: game.lastPass,
+        deathCause: game.deathCause,
+        next: game.world.next()?.index ?? null,
+        nextFamily: game.world.next()?.spec.family ?? null,
+        runTime: game.runTime,
       };
     },
-    setup(seed, forcedGates = [], shield = true) {
+    setup(seed, forcedGates = []) {
       game.seedOverride = seed;
       game.forcedGates = forcedGates;
-      game.startShield = shield;
     },
+    gates() {
+      return game.world.placed;
+    },
+    analytics() {
+      flush();
+      return { events: events(), summary: summary() };
+    },
+    clearAnalytics,
     preview(seed, n) {
       const s = new GateStream(seed);
       return Array.from({ length: n }, () => s.next());

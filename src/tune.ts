@@ -15,14 +15,19 @@ export interface Tune {
   zoneGap: number;
   repelBounce: number;
   wallBounce: number;
+  doorPull: number;
+  doorReach: number;
+  flipperKick: number;
+  irisSpeed: number;
+  slabPull: number;
   cameraSpeed: number;
-  shieldRecharge: number;
+  cameraRamp: number;
   juice: number;
   volume: number;
   showZones: number;
 }
 
-/** The values every earlier variant shipped with, kept for comparison. */
+/** The endless-tuner values this prototype started from, kept for comparison. */
 export const ORIGINAL: Tune = {
   gravity: 700,
   terminalFall: 380,
@@ -37,8 +42,13 @@ export const ORIGINAL: Tune = {
   zoneGap: 0,
   repelBounce: 0.6,
   wallBounce: 0.4,
+  doorPull: 1300,
+  doorReach: 110,
+  flipperKick: 460,
+  irisSpeed: 5,
+  slabPull: 900,
   cameraSpeed: 60,
-  shieldRecharge: 5,
+  cameraRamp: 0,
   juice: 1,
   volume: 1,
   showZones: 0,
@@ -57,9 +67,14 @@ export const DEFAULTS: Tune = {
   railField: 80,
   zoneGap: 16,
   repelBounce: 0.45,
-  wallBounce: 0.4,
-  cameraSpeed: 50,
-  shieldRecharge: 5,
+  wallBounce: 0.3,
+  doorPull: 1300,
+  doorReach: 110,
+  flipperKick: 460,
+  irisSpeed: 5,
+  slabPull: 900,
+  cameraSpeed: 45,
+  cameraRamp: 1.2,
   juice: 1,
   volume: 1,
   showZones: 0,
@@ -103,14 +118,24 @@ export const SLIDER_GROUPS: SliderGroup[] = [
       { key: 'railField', label: 'Rail zone size', hint: 'Reach out from a rail, in pixels', min: 20, max: 160, step: 5, zones: true },
       { key: 'zoneGap', label: 'Gap between zones', hint: 'Zones shrink to keep at least this apart', min: 0, max: 80, step: 2, zones: true },
       { key: 'repelBounce', label: 'Same colour bounce', hint: 'Bounce off a same colour magnet', min: 0, max: 1, step: 0.05 },
-      { key: 'wallBounce', label: 'Wall bounce', hint: 'Bounce off the side walls', min: 0, max: 1, step: 0.05 },
+      { key: 'wallBounce', label: 'Steel bounce', hint: 'Bounce off walls, shelves and iron', min: 0, max: 1, step: 0.05 },
+    ],
+  },
+  {
+    title: 'Gates',
+    sliders: [
+      { key: 'doorPull', label: 'Door pull', hint: 'How hard a door draws in the opposite colour and pushes off its own', min: 0, max: 3000, step: 50 },
+      { key: 'doorReach', label: 'Door reach', hint: 'How far above a door its pull starts, in pixels', min: 30, max: 200, step: 5 },
+      { key: 'flipperKick', label: 'Flipper kick', hint: 'Speed a paddle kicks you when you match its colour', min: 200, max: 900, step: 10 },
+      { key: 'irisSpeed', label: 'Iris speed', hint: 'How fast iris arms swing (full swings per second)', min: 1, max: 12, step: 0.5 },
+      { key: 'slabPull', label: 'Iron pull', hint: 'How hard the end magnets drag the iron slab', min: 200, max: 2000, step: 50 },
     ],
   },
   {
     title: 'Run',
     sliders: [
-      { key: 'cameraSpeed', label: 'Screen push', hint: 'Slowest the screen scrolls, so you can\u2019t hang forever', min: 0, max: 160, step: 5 },
-      { key: 'shieldRecharge', label: 'Shield recharge', hint: 'Gates to clear before the shield is back', min: 1, max: 15, step: 1 },
+      { key: 'cameraSpeed', label: 'Screen push', hint: 'Slowest the screen scrolls at the start of a run', min: 0, max: 160, step: 5 },
+      { key: 'cameraRamp', label: 'Push ramp', hint: 'Extra scroll speed per gate cleared (stops growing after 60 gates)', min: 0, max: 4, step: 0.1 },
     ],
   },
   {
@@ -123,7 +148,7 @@ export const SLIDER_GROUPS: SliderGroup[] = [
   },
 ];
 
-export const TUNE_KEY = 'magnetdrop.endless-tuner.settings';
+export const TUNE_KEY = 'magnetdrop.proto-a.settings';
 
 export const TUNE: Tune = { ...DEFAULTS };
 

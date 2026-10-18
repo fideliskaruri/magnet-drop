@@ -15,6 +15,8 @@
 - Tuning lives in `src/config.ts`. Don't scatter magic numbers.
 - `window.__md` is dev-only (`import.meta.env.DEV`). Keep it out of production bundles.
 - Audio (`src/audio.ts`) stays fully synthesised. Continuous layers are built once and only have their params glided; never create audio nodes per frame. One-shots go through the capped voice pool. `verify` renders every sound offline and fails on silence or clipping.
+- The look comes from `THEME` in `src/theme.ts`, shared with Prototype B. Change colours there, not inline.
+- Analytics (`src/analytics.ts`) stay local only: no network calls and no third-party scripts. Event names and the summary must match Prototype B.
 
 ## Deploy
 Pushing to `main` builds the game and deploys it to GitHub Pages through `.github/workflows/pages.yml`. The base path is `/magnet-drop/`.

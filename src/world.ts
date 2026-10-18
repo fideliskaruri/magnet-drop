@@ -1,12 +1,22 @@
 import { FIRST_GATE_TOP, VIEW_H } from './config.ts';
-import { GateStream, placeGate } from './gates.ts';
-import type { GateSpec, Magnet, PlacedGate, SpikeRow } from './types.ts';
+import { GateStream, placeGate, stepGate, type MachineEvent } from './gates.ts';
+import type { GateSpec, Magnet, Orb, PlacedGate, Saw, Solid } from './types.ts';
 import { fitZones } from './zones.ts';
+
+/** A gate the orb has just dropped through. */
+export interface Pass {
+  gate: PlacedGate;
+  /** Orb x where it crossed the pass line. */
+  x: number;
+  /** Through the middle half of an opening. */
+  clean: boolean;
+}
 
 export class World {
   placed: PlacedGate[] = [];
   magnets: Magnet[] = [];
-  spikes: SpikeRow[] = [];
+  solids: Solid[] = [];
+  saws: Saw[] = [];
   private readonly stream: GateStream;
   private count = 0;
   private nextTop = FIRST_GATE_TOP;
@@ -32,7 +42,17 @@ export class World {
     this.placed = this.placed.filter((p) => p.top + p.height > camY - 200);
     if (changed || this.placed.length !== before) {
       this.magnets = this.placed.flatMap((p) => p.magnets);
-      this.spikes = this.placed.flatMap((p) => p.spikes);
+      this.solids = this.placed.flatMap((p) => p.solids);
+      this.saws = this.placed.flatMap((p) => p.saws);
+    }
+  }
+
+  /** Move every live gate's machinery. Fills `out` with the events (for sound) and the gate they came from. */
+  step(orb: Orb, t: number, dt: number, out: { gate: PlacedGate; ev: MachineEvent }[]): void {
+    out.length = 0;
+    for (const g of this.placed) {
+      const ev = stepGate(g, orb, t, dt);
+      if (ev !== 'none') out.push({ gate: g, ev });
     }
   }
 
@@ -50,13 +70,24 @@ export class World {
     return undefined;
   }
 
-  /** How many barriers the orb has newly dropped below now that it is at `y`. One point each. */
-  passed(y: number): number {
-    let n = 0;
-    for (let g = this.gate(this.scored); g && y > g.passY; g = this.gate(this.scored)) {
-      this.scored++;
-      n++;
-    }
-    return n;
+  /** The next gate the orb has not yet dropped through. */
+  next(): PlacedGate | undefined {
+    return this.gate(this.scored);
   }
+
+  /** Fill `out` with the gates the orb newly dropped through this step. */
+  passed(orb: Orb, out: Pass[]): void {
+    out.length = 0;
+    for (let g = this.gate(this.scored); g && orb.y > g.passY; g = this.gate(this.scored)) {
+      this.scored++;
+      const k = orb.y === orb.prevY ? 1 : (g.passY - orb.prevY) / (orb.y - orb.prevY);
+      const x = orb.prevX + (orb.x - orb.prevX) * Math.max(0, Math.min(1, k));
+      out.push({ gate: g, x, clean: isClean(g, x) });
+    }
+  }
+}
+
+/** Through the middle half of one of the gate's openings. */
+export function isClean(g: { lanes: readonly { x0: number; x1: number }[] }, x: number): boolean {
+  return g.lanes.some((l) => Math.abs(x - (l.x0 + l.x1) / 2) <= (l.x1 - l.x0) / 4);
 }
