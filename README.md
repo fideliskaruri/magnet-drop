@@ -23,6 +23,8 @@ Each experiment lives on its own branch and deploys to its own URL. Every push t
 | `juice` | More intense visual effects | https://fideliskaruri.github.io/magnet-drop/juice/ |
 | `tuner` | Easy + sound + juice combined, with live tuning sliders | https://fideliskaruri.github.io/magnet-drop/tuner/ |
 | `endless-tuner` | Tuner combined with endless procedural gates | https://fideliskaruri.github.io/magnet-drop/endless-tuner/ |
+| `proto-a` | Prototype A: vertical drop through magnetic gates, industrial look, run analytics | https://fideliskaruri.github.io/magnet-drop/proto-a/ |
+| `proto-b` | Prototype B: sideways polarity runner, same look, sound and analytics as A | https://fideliskaruri.github.io/magnet-drop/proto-b/ |
 
 ## Run locally
 

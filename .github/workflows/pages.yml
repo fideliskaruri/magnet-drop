@@ -3,7 +3,7 @@ name: Deploy to GitHub Pages
 # main is served at /magnet-drop/ and every variant branch at /magnet-drop/<branch>/.
 on:
   push:
-    branches: [main, rise, easy, endless, powerups, sound, juice, tuner, endless-tuner]
+    branches: [main, rise, easy, endless, powerups, sound, juice, tuner, endless-tuner, proto-a, proto-b]
   workflow_dispatch:
 
 permissions:
@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  VARIANTS: rise easy endless powerups sound juice tuner endless-tuner
+  VARIANTS: rise easy endless powerups sound juice tuner endless-tuner proto-a proto-b
 
 jobs:
   build:
